@@ -6,7 +6,8 @@
 \label{nomenclature}
 
 \begin{tabbing}
-$A_{\rm p}$ \hspace{1in}  \= droplet/particle surface area \\
+$A_{\rm p,c}$ \hspace{1in}\= droplet/particle cross sectional area \\
+$A_{\rm p,s}$ \hspace{1in}\= droplet/particle surface area \\
 $A_{\alpha\beta}$         \> pre-exponential factor for solid phase Arrhenius reaction \\
 $B$                       \> emission source term \\
 $C$                       \> sprinkler C-factor; coefficient of natural convection \\
@@ -341,7 +342,7 @@ Recall that for an ideal gas we may write
 \begin{align}
 c_{p,\alpha} = c_{v,\alpha} + R/W_\alpha = \frac{R}{W_\alpha} \left(\frac{\gamma_\alpha}{\gamma_\alpha-1}\right) \,\mbox{,}
 \end{align}
-where $c_{p,\alpha}$ is the specific heat of $\alpha$ at constant pressure, $c_{v,\alpha}$ is the specific heat at constant volume, and $\gamma_\alpha = c_{p,\alpha}/c_{v,\alpha}$.  Commonly, the ratio of specific heats is approximated to be constant, and for fire calculations typically the value for air is chosen, $\gamma \approx 1.4$.  In this case, the sensible enthalpy becomes
+where $c_{p,\alpha}$ is the specific heat of $\alpha$ at constant pressure, $c_{v,\alpha}$ is the specific heat at constant volume, and $\gamma_\alpha = c_{p,\alpha}/c_{v,\alpha}$.  Commonly, the ratio of specific heats is approximated to be constant, and for fire calculations typically the value for air is chosen, $\gamma \approx 1.4$.  If we take the reference temperature to be zero, the sensible enthalpy in this case becomes
 \begin{align}
 \rho h_s = \rho c_p T = \rho T \sum_\alpha Y_\alpha c_{p,\alpha} = \rho R T \left(\frac{\gamma}{\gamma-1}\right)\sum_\alpha \frac{Y_\alpha}{W_\alpha} = \rho \frac{R T}{\overline{W}} \left(\frac{\gamma}{\gamma-1}\right) = \bar{p}\left(\frac{\gamma}{\gamma-1}\right)
 \end{align}
@@ -730,7 +731,9 @@ $\bar{\kappa}_i$ and $\bar{\gamma}_i$ in temperature and/or in wavenumber is
 performed by RADCAL when necessary. If the temperature sought is out of the
 tabulated data range, then the data at the nearest temperature are used.
 
-\chapter{A Simple Model of Flame Extinction}
+\chapter{Alternative Extinction Models}
+
+\section{A Simple Model of Flame Extinction}
 \label{o2_based_model}
 
 \subsubsection*{Frederick W. Mowrer, Department of Fire Protection Engineering, University of Maryland}
@@ -777,6 +780,11 @@ As an example, the critical adiabatic flame temperature can be assumed to have a
    \hat{Y}_{\OTWO,lim} = \frac{ \overline{c_p} (T_{CFT}-T_m) }{\Delta H/r_\OTWO} \approx  \frac{ 1.2 \, (1600-T_m) }{ 13100}  \label{extinction_model}
 \ee
 For a control volume at a temperature of \SI{300}{K}, i.e., near room temperature, the limiting oxygen mass fraction would evaluate to $\hat{Y}_{\OTWO,lim}=0.12$.  This value is consistent with the measurements of Morehart, Zukoski and Kubota\footnote{Morehart, J., Zukoski, E., and Kubota, T., ``Characteristics of Large Diffusion Flames Burning in a Vitiated Atmosphere,'' {\em Third International Symposium on Fire Safety Science}, Elsevier Science Publishers, pp.~575-583, 1991.} who measured the oxygen concentration at extinction of flames by dilution of air with combustion products. They found that flames self-extinguished at oxygen concentrations of 12.4~\% to 14.3~\%. Note that their results are expressed as volume, not mass, fractions. Beyler's chapter in the SFPE Handbook references other researchers who measured oxygen concentrations at extinction ranging from 12~\% to 15~\%.
+
+\section{A Two-Step Chemistry Flame Extinction Model}
+\label{co_based_model}
+
+The simplest of chemical reaction schemes for predicting carbon monoxide formation is to use a two-step chemistry model. The first step oxidizes fuel to water vapor, carbon monoxide, and other products. The second step oxidizes carbon monoxide to carbon dioxide. The simple extinction model discussed in Section~\ref{extinction} is not directly applicable to two-step chemistry. Instead an alternate extinction model has been developed. This model evaluates extinction twice. In the first evaluation, the model evaluates the amount of combustion that can occur based upon the local mixing timescale and the assumption that both chemistry steps occur. A limiting flame temperature computation is performed using the limiting flame temperature for the overall two-step reaction (e.g. the same temperature that would be used for a single-step). If extinction occurs, then the mixed species are reset back to their beginning of time step values and combustion is recomputed using only the second step. A second limiting flame temperature computation is then performed using the limiting flame temperature for carbon monoxide to see if the second step by itself can take place.
 
 \chapter{Numerical Methods for Integration of Complex Chemistry}
 \label{chemistry_integration}
@@ -1291,24 +1299,24 @@ The trajectories of Lagrangian particles in FDS could be calculated with Forward
 Several effects are neglected in this formulation. One is the effect of the change in droplet mass between  time steps. The droplet's evaporation is not coupled to this model. This is justified because the change in droplet mass per time step is small. A second neglected effect is the change in drag coefficient between time steps. This is justified because of the large uncertainties in the drag coefficients. Modeling the time derivative of the drag coefficient would not improve accuracy beyond these uncertainties, but it would slow down the computation.
 
 \subsubsection*{Relative velocities}
-Let $m_{\rm p}$ denote the particle mass, $\mathbf{u}$ the particle velocity, $A_\text{p}$ the particle cross-sectional area, $C_\text{d}$ the particle drag coefficient, $\rho$ the fluid mass density, $\mathbf{U}$ the fluid velocity around the particle, $V_\text{g}$ the volume occupied by the fluid in a cell, $M \equiv \rho V_\text{g}$ the fluid mass of a cell, $n_\text{p}$ the number of particles in a cell, $M_\text{p} \equiv M/n_\text{p}$ the average fluid mass per particle in a cell, and $\mathbf{g}$ the gravitational acceleration vector.
+Let $m_{\rm p}$ denote the particle mass, $\mathbf{u}$ the particle velocity, $A_\text{p,c}$ the particle cross-sectional area, $C_\text{d}$ the particle drag coefficient, $\rho$ the fluid mass density, $\mathbf{U}$ the fluid velocity around the particle, $V_\text{g}$ the volume occupied by the fluid in a cell, $M \equiv \rho V_\text{g}$ the fluid mass of a cell, $n_\text{p}$ the number of particles in a cell, $M_\text{p} \equiv M/n_\text{p}$ the average fluid mass per particle in a cell, and $\mathbf{g}$ the gravitational acceleration vector.
 
 The equations of motion of the particles and fluid are formulated as follows from Newton's second law,
 \begin{align}
     \label{particle_eom}
-    m_{\rm p} \frac{\d \mathbf{u}}{\d t} &= - \frac{1}{2} \rho C_\text{d} A_\text{p} (\mathbf{u} - \mathbf{U}) |\mathbf{u} - \mathbf{U}| + m_{\rm p} \mathbf{g} \\[.1in]
+    m_{\rm p} \frac{\d \mathbf{u}}{\d t} &= - \frac{1}{2} \rho C_\text{d} A_\text{p,c} (\mathbf{u} - \mathbf{U}) |\mathbf{u} - \mathbf{U}| + m_{\rm p} \mathbf{g} \\[.1in]
     \label{fluid_eom}
-    M_{\rm p} \frac{\d \mathbf{U}}{\d t} &= \frac{1}{2} \rho C_\text{d} A_\text{p} (\mathbf{u} - \mathbf{U}) |\mathbf{u} - \mathbf{U}|
+    M_{\rm p} \frac{\d \mathbf{U}}{\d t} &= \frac{1}{2} \rho C_\text{d} A_\text{p,c} (\mathbf{u} - \mathbf{U}) |\mathbf{u} - \mathbf{U}|
 \end{align}
 The fluid Eq.\ (\ref{fluid_eom}) is a greatly simplified version of Eq.\ (\ref{momeq}). It exists to get a reasonable estimate of the momentum coupling between the fluid and particle phases. Because it neglects terms corresponding to the pressure gradient, viscosity, etc., it is at best first-order accurate when those effects exist. However, unlike first-order accurate Forward Euler, this approach is stable. Additional terms could be added to improve accuracy in certain verification test cases, however, the current approach would solve these with a Forward Euler like step, which can cause instabilities if these terms are not constant. Thus, for the moment these terms are neglected despite their potential utility.
 
 If we define $\mathbf{u}_\text{r} \equiv \mathbf{u} - \mathbf{U}$ as the relative velocity between the fluid and the particle, we can find a single equation for the relative velocity by dividing both equations by their respective masses (i.e., $m_{\rm p}$ and $M_{\rm p}$) and then subtracting the second from the first. This result is
 \begin{align}
-    \frac{\d \mathbf{u}_\text{r}}{\d t} = -\frac{1}{2} \rho C_\text{d} A_\text{p} \left(\frac{1}{m_{\rm p}} + \frac{1}{M_{\rm p}} \right) \mathbf{u}_\text{r} |\mathbf{u}_\text{r}| + \mathbf{g} \,.
+    \frac{\d \mathbf{u}_\text{r}}{\d t} = -\frac{1}{2} \rho C_\text{d} A_\text{p,c} \left(\frac{1}{m_{\rm p}} + \frac{1}{M_{\rm p}} \right) \mathbf{u}_\text{r} |\mathbf{u}_\text{r}| + \mathbf{g} \,.
 \end{align}
 This equation can be written in compact form as follows:
 \begin{align}
-    \frac{\d \mathbf{u}_\text{r}}{\d t} = -K_{\rm p} \mathbf{u}_\text{r} |\mathbf{u}_\text{r}| + \mathbf{g} \quad ; \quad K_{\rm p} \equiv \frac{1}{2} \rho C_\text{d} A_\text{p} \left(\frac{1}{m_{\rm p}} + \frac{1}{M_{\rm p}} \right) \,.
+    \frac{\d \mathbf{u}_\text{r}}{\d t} = -K_{\rm p} \mathbf{u}_\text{r} |\mathbf{u}_\text{r}| + \mathbf{g} \quad ; \quad K_{\rm p} \equiv \frac{1}{2} \rho C_\text{d} A_\text{p,c} \left(\frac{1}{m_{\rm p}} + \frac{1}{M_{\rm p}} \right) \,.
 \end{align}
 This is the drag equation, which has no solution in terms of elementary functions. Our solution approach first finds a solution neglecting gravity and then adds in a series for the gravity terms. $\mathbf{u}_\text{r} \equiv \mathbf{u}_\text{d} + \mathbf{u}_\text{g}$ is the decomposition of $\mathbf{u}_\text{r}$. The velocities $\mathbf{u}_\text{r}$ and $\mathbf{u}_\text{d}$ both have the same initial condition, $\mathbf{u}_\text{d}(0) = \mathbf{u}_\text{r}(0) \equiv \mathbf{u}(0) - \mathbf{U}(0)$. And $\mathbf{u}_\text{d}$ satisfies the drag equation without gravity, specifically
 \begin{align}
