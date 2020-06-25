@@ -12,6 +12,7 @@
 !#define DEBUG_IBM_INTERPOLATION /* Debug IBM interpolation and forcing scheme. */
 !#define DEBUG_MATVEC_DATA /* Debug cut-cell region indexing, construction of regular, rc faces for scalars, etc. */
 !#define DEBUG_CCREGION_SCALAR_TRANSPORT /* Debug time integration algorithms for scalar tranport in cut-cell region. */
+!#define TIME_CC_IBM /* Enable timers for main CC_IBM routines. Time stepping routine wall times written to CHID_cc_cpu.csv */
 
 ! MKL Solver, defined in makefile:
 #ifdef WITH_MKL
@@ -479,19 +480,33 @@ INTEGER, SAVE, ALLOCATABLE, DIMENSION(:) :: REQ11, REQ12, REQ13
 LOGICAL, SAVE :: WRITE_SET_CUTCELLS_TIMINGS = .FALSE.
 INTEGER, PARAMETER :: N_SET_CUTCELLS_3D_CALLS = 10
 
-INTEGER, PARAMETER :: SET_CUTCELLS_TIME_INDEX              =  0
-INTEGER, PARAMETER :: GET_BODINT_PLANE_TIME_INDEX          =  1
-INTEGER, PARAMETER :: GET_X2_INTERSECTIONS_TIME_INDEX      =  2
-INTEGER, PARAMETER :: GET_X2_VERTVAR_TIME_INDEX            =  3
-INTEGER, PARAMETER :: GET_CARTEDGE_CUTEDGES_TIME_INDEX     =  4
-INTEGER, PARAMETER :: GET_BODX2X3_INTERSECTIONS_TIME_INDEX =  5
-INTEGER, PARAMETER :: GET_CARTFACE_CUTEDGES_TIME_INDEX     =  6
-INTEGER, PARAMETER :: GET_CARTCELL_CUTEDGES_TIME_INDEX     =  7
-INTEGER, PARAMETER :: GET_CARTFACE_CUTFACES_TIME_INDEX     =  8
-INTEGER, PARAMETER :: GET_CARTCELL_CUTFACES_TIME_INDEX     =  9
-INTEGER, PARAMETER :: GET_CARTCELL_CUTCELLS_TIME_INDEX     = 10
+INTEGER, PARAMETER :: SET_CUTCELLS_TIME_INDEX                 =  0
+INTEGER, PARAMETER :: GET_BODINT_PLANE_TIME_INDEX             =  1
+INTEGER, PARAMETER :: GET_X2_INTERSECTIONS_TIME_INDEX         =  2
+INTEGER, PARAMETER :: GET_X2_VERTVAR_TIME_INDEX               =  3
+INTEGER, PARAMETER :: GET_CARTEDGE_CUTEDGES_TIME_INDEX        =  4
+INTEGER, PARAMETER :: GET_BODX2X3_INTERSECTIONS_TIME_INDEX    =  5
+INTEGER, PARAMETER :: GET_CARTFACE_CUTEDGES_TIME_INDEX        =  6
+INTEGER, PARAMETER :: GET_CARTCELL_CUTEDGES_TIME_INDEX        =  7
+INTEGER, PARAMETER :: GET_CARTFACE_CUTFACES_TIME_INDEX        =  8
+INTEGER, PARAMETER :: GET_CARTCELL_CUTFACES_TIME_INDEX        =  9
+INTEGER, PARAMETER :: GET_CARTCELL_CUTCELLS_TIME_INDEX        = 10
+INTEGER, PARAMETER :: CCIBM_SET_DATA_TIME_INDEX               = 11
+INTEGER, PARAMETER :: INIT_CUTCELL_DATA_TIME_INDEX            = 12
+INTEGER, PARAMETER :: CCCOMPUTE_RADIATION_TIME_INDEX          = 13
+INTEGER, PARAMETER :: CCREGION_DENSITY_TIME_INDEX             = 14
+INTEGER, PARAMETER :: CCIBM_VELOCITY_FLUX_TIME_INDEX          = 15
+INTEGER, PARAMETER :: CCREGION_COMPUTE_VISCOSITY_TIME_INDEX   = 16
+INTEGER, PARAMETER :: CCIBM_INTERP_FACE_VEL_TIME_INDEX        = 17
+INTEGER, PARAMETER :: CCREGION_DIVERGENCE_PART_1_TIME_INDEX   = 18
+INTEGER, PARAMETER :: CCIBM_END_STEP_TIME_INDEX               = 19
+INTEGER, PARAMETER :: CCIBM_TARGET_VELOCITY_TIME_INDEX        = 20
+INTEGER, PARAMETER :: CCIBM_NO_FLUX_TIME_INDEX                = 21
+INTEGER, PARAMETER :: CCIBM_COMPUTE_VELOCITY_ERROR_TIME_INDEX = 22
+INTEGER, PARAMETER :: MESH_CC_EXCHANGE_TIME_INDEX             = 23
+INTEGER, PARAMETER :: MESH_CC_EXCHANGE2_TIME_INDEX            = 24
 
-REAL(EB), SAVE :: T_CC_USED(SET_CUTCELLS_TIME_INDEX:GET_CARTCELL_CUTCELLS_TIME_INDEX) = 0._EB
+REAL(EB), SAVE :: T_CC_USED(SET_CUTCELLS_TIME_INDEX:MESH_CC_EXCHANGE2_TIME_INDEX) = 0._EB
 
 INTEGER, SAVE :: N_CUTCELLS_PROC=0, N_INB_CUTFACES_PROC=0, N_REG_CUTFACES_PROC=0
 
@@ -550,7 +565,10 @@ INTEGER :: LU_SETCC=99
 ! Unlinked cell write unit:
 INTEGER :: LU_UNLNK=88
 
-! Rotated Cuber verification case wave number:
+! Parameter for MESH_CC_EXCHANGE optimized unpacking option.
+LOGICAL, PARAMETER :: UNPACK_NEW=.FALSE.
+
+! Rotated Cube verification case wave number:
 ! 1 , SPEC ID=MY BACKGROUND
 ! 2 , SPEC ID=NEUMANN SPEC
 INTEGER,  PARAMETER :: N_SPEC_BACKG = 1
@@ -691,6 +709,9 @@ ENDIF
 ! Define velocities on gas cut-faces underlaying Cartesian faces.
 IF(.NOT.CC_VELOBC_FLAG) THEN
    T_USED(14) = T_USED(14) + CURRENT_TIME() - TNOW
+#ifdef TIME_CC_IBM
+   T_CC_USED(CCREGION_COMPUTE_VISCOSITY_TIME_INDEX) = T_CC_USED(CCREGION_COMPUTE_VISCOSITY_TIME_INDEX) + CURRENT_TIME() - TNOW
+#endif
    CALL CCIBM_INTERP_FACE_VEL(DT,NM,.TRUE.) ! The flag is to test without interpolation to Cartesian faces,
                                             ! This is because we want to dispose of cartesian face
                                             ! interpolations.
@@ -733,6 +754,9 @@ ENDDO
 
 IF(.NOT.CC_VELOBC_FLAG) THEN
    T_USED(14) = T_USED(14) + CURRENT_TIME() - TNOW
+#ifdef TIME_CC_IBM
+   T_CC_USED(CCREGION_COMPUTE_VISCOSITY_TIME_INDEX) = T_CC_USED(CCREGION_COMPUTE_VISCOSITY_TIME_INDEX) + CURRENT_TIME() - TNOW
+#endif
    CALL CCIBM_INTERP_FACE_VEL(DT,NM,.FALSE.)
    TNOW = CURRENT_TIME()
 ENDIF
@@ -776,6 +800,9 @@ DO ICF=1,N_CFACE_CELLS
 ENDDO
 
 T_USED(14) = T_USED(14) + CURRENT_TIME() - TNOW
+#ifdef TIME_CC_IBM
+T_CC_USED(CCREGION_COMPUTE_VISCOSITY_TIME_INDEX) = T_CC_USED(CCREGION_COMPUTE_VISCOSITY_TIME_INDEX) + CURRENT_TIME() - TNOW
+#endif
 
 RETURN
 END SUBROUTINE CCREGION_COMPUTE_VISCOSITY
@@ -1912,7 +1939,11 @@ TYPE (WALL_TYPE), POINTER :: WC
 TYPE (EXTERNAL_WALL_TYPE), POINTER :: EWC
 INTEGER :: IW,II,JJ,KK
 
-INTEGER :: EP,INPE,INT_NPE_LO,INT_NPE_HI,VIND,IFACE_START,ICELL,IEDGE
+INTEGER :: EP,INPE,INT_NPE_LO,INT_NPE_HI,VIND,IFACE_START,ICELL,IEDGE,IFEP
+
+#ifdef TIME_CC_IBM
+REAL(EB) :: TNOW
+#endif
 
 ! In case of initialization code from main return.
 ! Initialization of cut-cell communications needs to be done later in the main.f90 sequence and will be done using
@@ -1920,6 +1951,10 @@ INTEGER :: EP,INPE,INT_NPE_LO,INT_NPE_HI,VIND,IFACE_START,ICELL,IEDGE
 IF (CODE == 0 .OR. CODE==2 .OR. CODE==5 .OR. CODE>6) RETURN
 
 IF (.NOT.CC_MATVEC_DEFINED) RETURN
+
+#ifdef TIME_CC_IBM
+TNOW = CURRENT_TIME()
+#endif
 
 ! First Allocate and setup persistent send-receives for scalars:
 INITIALIZE_CC_SCALARS_FORC_COND : IF (INITIALIZE_CC_SCALARS_FORC) THEN
@@ -2708,6 +2743,7 @@ RECV_MESH_LOOP: DO NOM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
       IF((CODE==1 .OR. CODE==4) .AND. M2%NFCC_R(2)>0) THEN
          NQT2 = 11+N_TOTAL_SCALARS
          VIND = 0 ! Cell centered variables.
+         IF(.NOT.UNPACK_NEW) THEN
          ! First loop cut-faces:
          DO ICF=1,M%N_CUTFACE_MESH
             IF (M%CUT_FACE(ICF)%STATUS /= IBM_INBOUNDARY) CYCLE
@@ -2734,12 +2770,32 @@ RECV_MESH_LOOP: DO NOM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
                ENDDO
             ENDDO
          ENDDO
+         ELSE
+         DO IFEP=1,M2%NFEP_R(2)
+            ICF = M2%IFEP_R_2( LOW_IND,IFEP)
+            INPE= M2%IFEP_R_2(HIGH_IND,IFEP)
+            LL  = M%CUT_FACE(ICF)%INT_NOMIND(HIGH_IND,INPE)
+            M%CUT_FACE(ICF)%INT_CVARS(    INT_H_IND,INPE)= M2%REAL_RECV_PKG13(NQT2*(LL-1)+1)
+            M%CUT_FACE(ICF)%INT_CVARS(  INT_RHO_IND,INPE)= M2%REAL_RECV_PKG13(NQT2*(LL-1)+4)
+            M%CUT_FACE(ICF)%INT_CVARS(  INT_TMP_IND,INPE)= M2%REAL_RECV_PKG13(NQT2*(LL-1)+5)
+            M%CUT_FACE(ICF)%INT_CVARS( INT_RSUM_IND,INPE)= M2%REAL_RECV_PKG13(NQT2*(LL-1)+6)
+            M%CUT_FACE(ICF)%INT_CVARS(   INT_MU_IND,INPE)= M2%REAL_RECV_PKG13(NQT2*(LL-1)+7)
+            M%CUT_FACE(ICF)%INT_CVARS(INT_MUDNS_IND,INPE)= M2%REAL_RECV_PKG13(NQT2*(LL-1)+8)
+            M%CUT_FACE(ICF)%INT_CVARS( INT_KRES_IND,INPE)= M2%REAL_RECV_PKG13(NQT2*(LL-1)+9)
+            M%CUT_FACE(ICF)%INT_CVARS(    INT_D_IND,INPE)= M2%REAL_RECV_PKG13(NQT2*(LL-1)+10)
+            M%CUT_FACE(ICF)%INT_CVARS(    INT_P_IND,INPE)= M2%REAL_RECV_PKG13(NQT2*(LL-1)+11)
+            DO NN=1,N_TOTAL_SCALARS
+               M%CUT_FACE(ICF)%INT_CVARS(INT_P_IND+NN,INPE)=M2%REAL_RECV_PKG13(NQT2*(LL-1)+11+NN)
+            ENDDO
+         ENDDO
+         ENDIF
       ENDIF
 
       ! Unpack velocity, momentum rhs and previous substep dH/Dx1 for faces, in PREDICTOR, IBM forcing:
 
       IF (CODE==1 .AND. M2%NFCC_R(1)>0) THEN
          NQT2 = 5 ! Three variables are passed per Stencil point. Vel (or Vels), Fv and DHDX1.
+         IF(.NOT.UNPACK_NEW) THEN
          ! First loop cut-faces:
          DO ICF=1,M%N_CUTFACE_MESH
             IFACE_START=1
@@ -2762,10 +2818,23 @@ RECV_MESH_LOOP: DO NOM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
                ENDDO
             ENDDO
          ENDDO
+         ELSE
+         DO IFEP=1,M2%NFEP_R(1)
+            ICF = M2%IFEP_R_1( LOW_IND,IFEP)
+            INPE= M2%IFEP_R_1(HIGH_IND,IFEP)
+            LL  = M%CUT_FACE(ICF)%INT_NOMIND(HIGH_IND,INPE)
+            M%CUT_FACE(ICF)%INT_FVARS( INT_VEL_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+1) ! Vel^n
+            M%CUT_FACE(ICF)%INT_FVARS(  INT_FV_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+2) ! Predictor FV
+            M%CUT_FACE(ICF)%INT_FVARS(INT_DHDX_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+3) ! dH/dx1^n-1/2
+            M%CUT_FACE(ICF)%INT_FVARS(INT_DPDX_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+4) ! dP/dx1^n-1/2
+            M%CUT_FACE(ICF)%INT_FVARS(  INT_MU_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+5) ! Face Mu.
+         ENDDO
+         ENDIF
       ENDIF
 
       IF (CODE==3 .AND. M2%NFCC_R(1)>0) THEN
          NQT2 = 5 ! Three variables are passed per Stencil point. Vel (or Vels), Fv and DHDX1.
+         IF(.NOT.UNPACK_NEW) THEN
          ! First loop cut-faces:
          DO IEDGE=1,M%IBM_NRCEDGE
             DO EP=1,INT_N_EXT_PTS  ! External point for IEDGE
@@ -2784,6 +2853,18 @@ RECV_MESH_LOOP: DO NOM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
                ENDDO
             ENDDO
          ENDDO
+         ELSE
+         DO IFEP=1,M2%NFEP_R(3)
+            IEDGE= M2%IFEP_R_3( LOW_IND,IFEP)
+            INPE = M2%IFEP_R_3(HIGH_IND,IFEP)
+            LL   = M%IBM_RCEDGE(IEDGE)%INT_NOMIND(HIGH_IND,INPE)
+            M%IBM_RCEDGE(IEDGE)%INT_FVARS(INT_VELS_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+1) ! Vel^*
+            M%IBM_RCEDGE(IEDGE)%INT_FVARS(  INT_FV_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+2) ! Predictor FV
+            M%IBM_RCEDGE(IEDGE)%INT_FVARS(INT_DHDX_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+3) ! dH/dx1^n
+            M%IBM_RCEDGE(IEDGE)%INT_FVARS(INT_DPDX_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+4) ! dP/dx1^n
+            M%IBM_RCEDGE(IEDGE)%INT_FVARS(  INT_MU_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+5) ! Mu.
+         ENDDO
+         ENDIF
       ENDIF
 
       ! Unpack densities and species mass fractions following CORRECTOR exchange
@@ -2814,6 +2895,7 @@ RECV_MESH_LOOP: DO NOM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
 
       IF (CODE==4 .AND. M2%NFCC_R(1)>0) THEN
          NQT2 = 5 ! Three variables are passed per Stencil point. Vel (or Vels), Fv and DHDX1.
+         IF(.NOT.UNPACK_NEW) THEN
          ! First loop cut-faces:
          DO ICF=1,M%N_CUTFACE_MESH
             IFACE_START=1
@@ -2836,10 +2918,23 @@ RECV_MESH_LOOP: DO NOM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
                ENDDO
             ENDDO
          ENDDO
+         ELSE
+         DO IFEP=1,M2%NFEP_R(1)
+            ICF = M2%IFEP_R_1( LOW_IND,IFEP)
+            INPE= M2%IFEP_R_1(HIGH_IND,IFEP)
+            LL  = M%CUT_FACE(ICF)%INT_NOMIND(HIGH_IND,INPE)
+            M%CUT_FACE(ICF)%INT_FVARS( INT_VEL_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+1) ! Vel^n
+            M%CUT_FACE(ICF)%INT_FVARS(  INT_FV_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+2) ! Predictor FV
+            M%CUT_FACE(ICF)%INT_FVARS(INT_DHDX_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+3) ! dH/dx1^n-1/2
+            M%CUT_FACE(ICF)%INT_FVARS(INT_DPDX_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+4) ! dP/dx1^n-1/2
+            M%CUT_FACE(ICF)%INT_FVARS(  INT_MU_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+5) ! Face Mu.
+         ENDDO
+         ENDIF
       ENDIF
 
       IF (CODE==6 .AND. M2%NFCC_R(1)>0) THEN
          NQT2 = 5 ! Three variables are passed per Stencil point. Vel (or Vels), Fv and DHDX1.
+         IF(.NOT.UNPACK_NEW) THEN
          ! First loop cut-faces:
          DO IEDGE=1,M%IBM_NRCEDGE
             DO EP=1,INT_N_EXT_PTS  ! External point for face IEDGE
@@ -2858,6 +2953,18 @@ RECV_MESH_LOOP: DO NOM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
                ENDDO
             ENDDO
          ENDDO
+         ELSE
+         DO IFEP=1,M2%NFEP_R(3)
+            IEDGE= M2%IFEP_R_3( LOW_IND,IFEP)
+            INPE = M2%IFEP_R_3(HIGH_IND,IFEP)
+            LL   = M%IBM_RCEDGE(IEDGE)%INT_NOMIND(HIGH_IND,INPE)
+            M%IBM_RCEDGE(IEDGE)%INT_FVARS(INT_VELS_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+1) ! Vel^*
+            M%IBM_RCEDGE(IEDGE)%INT_FVARS(  INT_FV_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+2) ! Predictor FV
+            M%IBM_RCEDGE(IEDGE)%INT_FVARS(INT_DHDX_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+3) ! dH/dx1^n
+            M%IBM_RCEDGE(IEDGE)%INT_FVARS(INT_DPDX_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+4) ! dP/dx1^n
+            M%IBM_RCEDGE(IEDGE)%INT_FVARS(  INT_MU_IND,INPE)= M2%REAL_RECV_PKG12(NQT2*(LL-1)+5) ! Mu.
+         ENDDO
+         ENDIF
       ENDIF
 
 
@@ -2944,6 +3051,9 @@ ENDDO RECV_MESH_LOOP
 !    CALL DEBUG_WAIT
 ! ENDIF
 
+#ifdef TIME_CC_IBM
+T_CC_USED(MESH_CC_EXCHANGE_TIME_INDEX) = T_CC_USED(MESH_CC_EXCHANGE_TIME_INDEX) + CURRENT_TIME() - TNOW
+#endif
 RETURN
 
 CONTAINS
@@ -2977,6 +3087,154 @@ ENDIF
 END SUBROUTINE CC_TIMEOUT
 
 END SUBROUTINE MESH_CC_EXCHANGE
+
+
+! --------------------------- CC_EXCHANGE_UNPACKING_ARRAYS --------------------------
+
+SUBROUTINE CC_EXCHANGE_UNPACKING_ARRAYS()
+
+! Local Variables:
+! Local Variables:
+INTEGER :: NM,NOM,NOOM,IFEP,ICF,IFACE
+TYPE (MESH_TYPE), POINTER :: M
+TYPE (OMESH_TYPE), POINTER :: M2
+INTEGER :: EP,INPE,INT_NPE_LO,INT_NPE_HI,VIND,IFACE_START,IEDGE
+
+RECV_MESH_LOOP: DO NOM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
+
+   IF (EVACUATION_ONLY(NOM)) CYCLE RECV_MESH_LOOP
+   M =>MESHES(NOM)
+
+   SEND_MESH_LOOP: DO NM=1,NMESHES
+
+      M2=>MESHES(NOM)%OMESH(NM)
+      IF (EVACUATION_ONLY(NM)) CYCLE SEND_MESH_LOOP
+
+      ! Boundary and gasphase cut-faces and rcedges, face centered variables for interpolation:
+      CF_FC_IF : IF(M2%NFCC_R(1)>0) THEN
+         ! First cut-faces:
+         ! Count:
+         DO ICF=1,M%N_CUTFACE_MESH
+            IFACE_START=1
+            IF (M%CUT_FACE(ICF)%STATUS == IBM_GASPHASE) IFACE_START=0
+            DO IFACE=IFACE_START,M%CUT_FACE(ICF)%NFACE
+               DO EP=1,INT_N_EXT_PTS  ! External point for face IFACE
+                  DO VIND=IAXIS,KAXIS ! Velocity component U, V or W for external point EP
+                     INT_NPE_LO = M%CUT_FACE(ICF)%INT_NPE(LOW_IND,VIND,EP,IFACE)
+                     INT_NPE_HI = M%CUT_FACE(ICF)%INT_NPE(HIGH_IND,VIND,EP,IFACE)
+                     DO INPE=INT_NPE_LO+1,INT_NPE_LO+INT_NPE_HI
+                        NOOM   = M%CUT_FACE(ICF)%INT_NOMIND( LOW_IND,INPE); IF (NOOM /= NM) CYCLE
+                        M2%NFEP_R(1) = M2%NFEP_R(1) + 1
+                     ENDDO
+                  ENDDO
+               ENDDO
+            ENDDO
+         ENDDO
+         IF (M2%NFEP_R(1) > 0) THEN
+            ! Allocate:
+            IF (ALLOCATED(M2%IFEP_R_1)) DEALLOCATE(M2%IFEP_R_1)
+            ALLOCATE(M2%IFEP_R_1(LOW_IND:HIGH_IND,M2%NFEP_R(1))); M2%IFEP_R_1 = IBM_UNDEFINED
+            ! Add index entries:
+            IFEP = 0
+            DO ICF=1,M%N_CUTFACE_MESH
+               IFACE_START=1
+               IF (M%CUT_FACE(ICF)%STATUS == IBM_GASPHASE) IFACE_START=0
+               DO IFACE=IFACE_START,M%CUT_FACE(ICF)%NFACE
+                  DO EP=1,INT_N_EXT_PTS  ! External point for face IFACE
+                     DO VIND=IAXIS,KAXIS ! Velocity component U, V or W for external point EP
+                        INT_NPE_LO = M%CUT_FACE(ICF)%INT_NPE(LOW_IND,VIND,EP,IFACE)
+                        INT_NPE_HI = M%CUT_FACE(ICF)%INT_NPE(HIGH_IND,VIND,EP,IFACE)
+                        DO INPE=INT_NPE_LO+1,INT_NPE_LO+INT_NPE_HI
+                           NOOM   = M%CUT_FACE(ICF)%INT_NOMIND( LOW_IND,INPE); IF (NOOM /= NM) CYCLE
+                           IFEP = IFEP + 1
+                           M2%IFEP_R_1( LOW_IND:HIGH_IND,IFEP) = (/ ICF, INPE /)
+                        ENDDO
+                     ENDDO
+                  ENDDO
+               ENDDO
+            ENDDO
+         ENDIF
+
+         ! Then RCEDGES:
+         ! Count:
+         DO IEDGE=1,M%IBM_NRCEDGE
+            DO EP=1,INT_N_EXT_PTS  ! External point for face IEDGE
+               DO VIND=IAXIS,KAXIS ! Velocity component U, V or W for external point EP
+                  INT_NPE_LO = M%IBM_RCEDGE(IEDGE)%INT_NPE(LOW_IND,VIND,EP,0)
+                  INT_NPE_HI = M%IBM_RCEDGE(IEDGE)%INT_NPE(HIGH_IND,VIND,EP,0)
+                  DO INPE=INT_NPE_LO+1,INT_NPE_LO+INT_NPE_HI
+                     NOOM   = M%IBM_RCEDGE(IEDGE)%INT_NOMIND( LOW_IND,INPE); IF (NOOM /= NM) CYCLE
+                     M2%NFEP_R(3) = M2%NFEP_R(3) + 1
+                  ENDDO
+               ENDDO
+            ENDDO
+         ENDDO
+         IF (M2%NFEP_R(3) > 0) THEN
+            ! Allocate:
+            IF (ALLOCATED(M2%IFEP_R_3)) DEALLOCATE(M2%IFEP_R_3)
+            ALLOCATE(M2%IFEP_R_3(LOW_IND:HIGH_IND,M2%NFEP_R(3))); M2%IFEP_R_3 = IBM_UNDEFINED
+            ! Add index entries:
+            IFEP = 0
+            DO IEDGE=1,M%IBM_NRCEDGE
+               DO EP=1,INT_N_EXT_PTS  ! External point for face IEDGE
+                  DO VIND=IAXIS,KAXIS ! Velocity component U, V or W for external point EP
+                     INT_NPE_LO = M%IBM_RCEDGE(IEDGE)%INT_NPE(LOW_IND,VIND,EP,0)
+                     INT_NPE_HI = M%IBM_RCEDGE(IEDGE)%INT_NPE(HIGH_IND,VIND,EP,0)
+                     DO INPE=INT_NPE_LO+1,INT_NPE_LO+INT_NPE_HI
+                        NOOM   = M%IBM_RCEDGE(IEDGE)%INT_NOMIND( LOW_IND,INPE); IF (NOOM /= NM) CYCLE
+                        IFEP = IFEP + 1
+                        M2%IFEP_R_3( LOW_IND:HIGH_IND,IFEP) = (/ IEDGE, INPE /)
+                     ENDDO
+                  ENDDO
+               ENDDO
+            ENDDO
+         ENDIF
+      ENDIF CF_FC_IF
+
+      ! Boundary cut-faces, cell centered variables for interpolation:
+      BNDCF_CC_IF : IF(M2%NFCC_R(2)>0) THEN
+         VIND = 0 ! Cell centered variables.
+         ! Count:
+         DO ICF=1,M%N_CUTFACE_MESH
+            IF (M%CUT_FACE(ICF)%STATUS /= IBM_INBOUNDARY) CYCLE
+            DO IFACE=1,M%CUT_FACE(ICF)%NFACE
+               DO EP=1,INT_N_EXT_PTS  ! External point for face IFACE
+                  INT_NPE_LO = M%CUT_FACE(ICF)%INT_NPE(LOW_IND,VIND,EP,IFACE)
+                  INT_NPE_HI = M%CUT_FACE(ICF)%INT_NPE(HIGH_IND,VIND,EP,IFACE)
+                  DO INPE=INT_NPE_LO+1,INT_NPE_LO+INT_NPE_HI
+                     NOOM   = M%CUT_FACE(ICF)%INT_NOMIND( LOW_IND,INPE); IF (NOOM /= NM) CYCLE
+                     M2%NFEP_R(2) = M2%NFEP_R(2) + 1
+                  ENDDO
+               ENDDO
+            ENDDO
+         ENDDO
+         IF (M2%NFEP_R(2) > 0) THEN
+            ! Allocate:
+            IF (ALLOCATED(M2%IFEP_R_2)) DEALLOCATE(M2%IFEP_R_2)
+            ALLOCATE(M2%IFEP_R_2(LOW_IND:HIGH_IND,M2%NFEP_R(2))); M2%IFEP_R_2 = IBM_UNDEFINED
+            ! Add index entries:
+            IFEP = 0
+            DO ICF=1,M%N_CUTFACE_MESH
+               IF (M%CUT_FACE(ICF)%STATUS /= IBM_INBOUNDARY) CYCLE
+               DO IFACE=1,M%CUT_FACE(ICF)%NFACE
+                  DO EP=1,INT_N_EXT_PTS  ! External point for face IFACE
+                     INT_NPE_LO = M%CUT_FACE(ICF)%INT_NPE(LOW_IND,VIND,EP,IFACE)
+                     INT_NPE_HI = M%CUT_FACE(ICF)%INT_NPE(HIGH_IND,VIND,EP,IFACE)
+                     DO INPE=INT_NPE_LO+1,INT_NPE_LO+INT_NPE_HI
+                        NOOM = M%CUT_FACE(ICF)%INT_NOMIND( LOW_IND,INPE); IF (NOOM /= NM) CYCLE
+                        IFEP = IFEP + 1
+                        M2%IFEP_R_2( LOW_IND:HIGH_IND,IFEP) = (/ ICF, INPE /)
+                     ENDDO
+                  ENDDO
+               ENDDO
+            ENDDO
+         ENDIF
+      ENDIF BNDCF_CC_IF
+   ENDDO SEND_MESH_LOOP
+ENDDO RECV_MESH_LOOP
+
+RETURN
+END SUBROUTINE CC_EXCHANGE_UNPACKING_ARRAYS
 
 
 
@@ -3848,7 +4106,9 @@ IF(CODE==3 .OR. CODE==6) THEN
 ENDIF
 
 T_USED(14) = T_USED(14) + CURRENT_TIME() - TNOW
-
+#ifdef TIME_CC_IBM
+T_CC_USED(MESH_CC_EXCHANGE2_TIME_INDEX) = T_CC_USED(MESH_CC_EXCHANGE2_TIME_INDEX) + CURRENT_TIME() - TNOW
+#endif
 RETURN
 
 CONTAINS
@@ -3928,6 +4188,9 @@ ELSE
 ENDIF
 
 T_USED(14) = T_USED(14) + CURRENT_TIME() - TNOW
+#ifdef TIME_CC_IBM
+T_CC_USED(CCCOMPUTE_RADIATION_TIME_INDEX) = T_CC_USED(CCCOMPUTE_RADIATION_TIME_INDEX) + CURRENT_TIME() - TNOW
+#endif
 
 RETURN
 END SUBROUTINE CCCOMPUTE_RADIATION
@@ -4108,6 +4371,10 @@ CC_MATVEC_DEFINED=.TRUE.
 ENDIF SET_CUTCELLS_CALL_IF
 
 T_USED(14) = T_USED(14) + CURRENT_TIME() - TNOW2
+
+#ifdef TIME_CC_IBM
+T_CC_USED(CCIBM_SET_DATA_TIME_INDEX) = T_CC_USED(CCIBM_SET_DATA_TIME_INDEX) + CURRENT_TIME() - TNOW2
+#endif
 RETURN
 
 CONTAINS
@@ -4276,11 +4543,18 @@ LOGICAL, INTENT(IN) :: DIAGNOSTICS
 ! Local Variables:
 INTEGER :: CODE
 REAL(EB):: TNOW
-
+#ifdef DEBUG_CCREGION_SCALAR_TRANSPORT
+LOGICAL :: DUMLOG
+#endif
+#ifdef TIME_CC_IBM
+REAL(EB):: TNOW2
+#endif
 IF (FREEZE_VELOCITY .OR. SOLID_PHASE_ONLY) RETURN
 
 TNOW = CURRENT_TIME()
-
+#ifdef TIME_CC_IBM
+TNOW2= TNOW
+#endif
 ! Flux match Cartesian face velocity back to cut-faces:
 CALL CCIBM_VELOCITY_CUTFACES
 
@@ -4288,13 +4562,27 @@ CALL CCIBM_VELOCITY_CUTFACES
 IF(.NOT.CC_FORCE_PRESSIT) THEN
    IF(PREDICTOR) CODE = 3
    IF(CORRECTOR) CODE = 6
+#ifdef TIME_CC_IBM
+   T_CC_USED(CCIBM_END_STEP_TIME_INDEX) = T_CC_USED(CCIBM_END_STEP_TIME_INDEX) + CURRENT_TIME() - TNOW2
+#endif
    CALL MESH_CC_EXCHANGE(CODE,.FALSE.)
+#ifdef TIME_CC_IBM
+   TNOW2= CURRENT_TIME()
+#endif
    CALL CCIBM_H_INTERP
    CALL CCIBM_RHO0W_INTERP
+#ifdef TIME_CC_IBM
+   T_CC_USED(CCIBM_END_STEP_TIME_INDEX) = T_CC_USED(CCIBM_END_STEP_TIME_INDEX) + CURRENT_TIME() - TNOW2
+#endif
    ! Exchange interpolated H:
    CALL MESH_CC_EXCHANGE(CODE,.TRUE.)
+#ifdef TIME_CC_IBM
+   TNOW2= CURRENT_TIME()
+#endif
 ENDIF
+
 #ifdef DEBUG_CCREGION_SCALAR_TRANSPORT
+DUMLOG = DIAGNOSTICS
 IF (PREDICTOR) CALL CCIBM_CHECK_DIVERGENCE(T,DT,.TRUE.)
 IF (CORRECTOR) CALL CCIBM_CHECK_DIVERGENCE(T,DT,.FALSE.)
 #else
@@ -4302,7 +4590,9 @@ IF (CORRECTOR .AND. DIAGNOSTICS) CALL CCIBM_CHECK_DIVERGENCE(T,DT,.FALSE.)
 #endif
 
 T_USED(14) = T_USED(14) + CURRENT_TIME() - TNOW
-
+#ifdef TIME_CC_IBM
+T_CC_USED(CCIBM_END_STEP_TIME_INDEX) = T_CC_USED(CCIBM_END_STEP_TIME_INDEX) + CURRENT_TIME() - TNOW2
+#endif
 RETURN
 
 END SUBROUTINE CCIBM_END_STEP
@@ -4361,9 +4651,11 @@ MESH_LOOP : DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
          DO N=1,N_TRACKED_SPECIES
             CUT_CELL(ICC)%ZZS(N,JCC) = SPECIES_MIXTURE(N)%ZZ0
          ENDDO
+         CUT_CELL(ICC)%MIX_TIME(JCC) = DT
          CALL GET_SPECIFIC_GAS_CONSTANT(ZZ_CC(1:N_TRACKED_SPECIES),CUT_CELL(ICC)%RSUM(JCC))
          CUT_CELL(ICC)%D(JCC)        = 0._EB
          CUT_CELL(ICC)%DS(JCC)       = 0._EB
+         CUT_CELL(ICC)%DVOL(JCC)     = 0._EB
          CUT_CELL(ICC)%D_SOURCE(JCC) = 0._EB
          CUT_CELL(ICC)%Q(JCC)        = 0._EB
          CUT_CELL(ICC)%QR(JCC)       = 0._EB
@@ -4573,6 +4865,10 @@ CALL CCIBM_RHO0W_INTERP
 IF(GET_CUTCELLS_VERBOSE) CALL CCIBM_CHECK_DIVERGENCE(T,DT,.FALSE.)
 
 T_USED(14) = T_USED(14) + CURRENT_TIME() - TNOW
+#ifdef TIME_CC_IBM
+T_CC_USED(INIT_CUTCELL_DATA_TIME_INDEX) = T_CC_USED(INIT_CUTCELL_DATA_TIME_INDEX) + CURRENT_TIME() - TNOW
+#endif
+
 RETURN
 END SUBROUTINE INIT_CUTCELL_DATA
 
@@ -4738,9 +5034,51 @@ END SUBROUTINE CCIBM_VELOCITY_NO_GRADH
 
 SUBROUTINE FINISH_CCIBM
 
+USE MPI
+
 ! Local variables:
 
-! Stub for now.
+#ifdef TIME_CC_IBM
+INTEGER :: I, TLB, TUB, LU_TCC, IERR
+CHARACTER(MESSAGE_LENGTH) :: CC_CPU_FILE
+REAL(EB), ALLOCATABLE, DIMENSION(:) :: T_CC_USED_MIN, T_CC_USED_MAX, T_CC_USED_MEA
+CHARACTER(30) :: FRMT
+
+#endif
+
+
+
+#ifdef TIME_CC_IBM
+TLB = LBOUND(T_CC_USED,DIM=1)
+TUB = UBOUND(T_CC_USED,DIM=1)
+ALLOCATE(T_CC_USED_MIN(TLB:TUB),T_CC_USED_MAX(TLB:TUB),T_CC_USED_MEA(TLB:TUB))
+IF (N_MPI_PROCESSES > 1) THEN
+   CALL MPI_ALLREDUCE(T_CC_USED(TLB) , T_CC_USED_MIN(TLB) , TUB-TLB+1, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, IERR)
+   CALL MPI_ALLREDUCE(T_CC_USED(TLB) , T_CC_USED_MAX(TLB) , TUB-TLB+1, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, IERR)
+   CALL MPI_ALLREDUCE(T_CC_USED(TLB) , T_CC_USED_MEA(TLB) , TUB-TLB+1, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, IERR)
+   T_CC_USED_MEA = T_CC_USED_MEA / REAL(N_MPI_PROCESSES,EB)
+ELSE
+   T_CC_USED_MIN(TLB:TUB) = T_CC_USED(TLB:TUB)
+   T_CC_USED_MAX(TLB:TUB) = T_CC_USED(TLB:TUB)
+   T_CC_USED_MEA(TLB:TUB) = T_CC_USED(TLB:TUB)
+ENDIF
+IF (MYID==0) THEN
+   WRITE(CC_CPU_FILE,'(A,A)') TRIM(CHID),'_cc_cpu.csv'
+   OPEN(NEWUNIT=LU_TCC,FILE=TRIM(CC_CPU_FILE),STATUS='UNKNOWN')
+   WRITE(LU_TCC,'(A,A,A)') 'CCCOMPUTE_RADIATION, CCREGION_DENSITY, CCIBM_VELOCITY_FLUX, CCREGION_COMPUTE_VISCOSITY, ',&
+                           'CCIBM_INTERP_FACE_VEL, CCREGION_DIVERGENCE_PART_1, CCIBM_END_STEP, CCIBM_TARGET_VELOCITY, ',&
+                           'CCIBM_NO_FLUX, CCIBM_COMPUTE_VELOCITY_ERROR, MESH_CC_EXCHANGE, MESH_CC_EXCHANGE2 (s)'
+   WRITE(FRMT,'(A,I2.2,A)') '(',MESH_CC_EXCHANGE2_TIME_INDEX-CCCOMPUTE_RADIATION_TIME_INDEX+1,'(",",ES10.3))'
+   WRITE(LU_TCC,FRMT) (T_CC_USED_MIN(I),I=CCCOMPUTE_RADIATION_TIME_INDEX,MESH_CC_EXCHANGE2_TIME_INDEX)
+   WRITE(LU_TCC,FRMT) (T_CC_USED_MAX(I),I=CCCOMPUTE_RADIATION_TIME_INDEX,MESH_CC_EXCHANGE2_TIME_INDEX)
+   WRITE(LU_TCC,FRMT) (T_CC_USED_MEA(I),I=CCCOMPUTE_RADIATION_TIME_INDEX,MESH_CC_EXCHANGE2_TIME_INDEX)
+   CLOSE(LU_TCC)
+ENDIF
+DEALLOCATE(T_CC_USED_MIN,T_CC_USED_MAX,T_CC_USED_MEA)
+#endif
+
+
+
 
 RETURN
 END SUBROUTINE FINISH_CCIBM
@@ -4761,7 +5099,7 @@ INTEGER,  INTENT(IN) :: NM
 
 ! Local Variables:
 INTEGER :: N,I,J,K,X1AXIS,ISIDE,IFACE,ICC,JCC,ICF,IEXIM,LHFACE
-REAL(EB), POINTER, DIMENSION(:,:,:) :: DP,RHOP,RTRM,CP,R_H_G,U_DOT_DEL_RHO_Z
+REAL(EB), POINTER, DIMENSION(:,:,:) :: DP,DPVOL,RHOP,RTRM,CP,R_H_G,U_DOT_DEL_RHO_Z_VOL
 REAL(EB), POINTER, DIMENSION(:,:) :: PBAR_P
 REAL(EB), POINTER, DIMENSION(:,:,:,:) :: ZZP
 REAL(EB) :: RDT,CCM1,CCP1,IDX,AF,TMP_G,H_S,&
@@ -4783,7 +5121,7 @@ LOGICAL, PARAMETER :: FIX_DIFF_FLUXES  = .TRUE.
 
 REAL(EB), PARAMETER :: FLX_EPS=1.E-15_EB
 
-REAL(EB), ALLOCATABLE, DIMENSION(:) :: DIVRG_VOL , RTRM_VOL, VOLDVRG
+REAL(EB), ALLOCATABLE, DIMENSION(:) :: DIVRG_VEC , RTRM_VEC, VOLDVRG
 INTEGER :: INDZ
 
 ! Pressure sums re-integration vars:
@@ -4817,74 +5155,65 @@ RDT = 1._EB/DT
 
 SELECT CASE(PREDICTOR)
    CASE(.TRUE.)
-      DP => DS
+      DP     => DS
       PBAR_P => PBAR_S
-      RHOP => RHOS
-      PRFCT = 0._EB ! Use star cut-cell quantities.
+      RHOP   => RHOS
+      PRFCT  = 0._EB ! Use star cut-cell quantities.
    CASE(.FALSE.)
-      DP => DDDT
+      DP     => DDDT
       PBAR_P => PBAR
-      RHOP => RHO
-      PRFCT = 1._EB ! Use end of step cut-cell quantities.
+      RHOP   => RHO
+      PRFCT  = 1._EB ! Use end of step cut-cell quantities.
 END SELECT
 
-R_PBAR = 1._EB/PBAR_P
 
-RTRM => WORK1
+R_PBAR = 1._EB/PBAR_P
+DPVOL  => DP
+RTRM   => WORK1
 
 ! Set DP to zero in Cartesian cells of type: IBM_SOLID, IBM_CUTCFE, and IBM_GASPHASE where IBM_UNKZ > 0:
 DO K=1,KBAR
    DO J=1,JBAR
       DO I=1,IBAR
          IF ((CCVAR(I,J,K,IBM_CGSC) == IBM_GASPHASE) .AND. (CCVAR(I,J,K,IBM_UNKZ) <= 0)) CYCLE
-         DP(I,J,K) = 0._EB
+         DPVOL(I,J,K) = 0._EB
       ENDDO
    ENDDO
 ENDDO
-SELECT CASE(PREDICTOR)
-   CASE(.TRUE.)
-      DO ICC=1,MESHES(NM)%N_CUTCELL_MESH+MESHES(NM)%N_GCCUTCELL_MESH
-         DO JCC=1,CUT_CELL(ICC)%NCELL
-            CUT_CELL(ICC)%DS(JCC)= 0._EB
-            CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC)=0._EB
-         ENDDO
-      ENDDO
-   CASE(.FALSE.)
-      DO ICC=1,MESHES(NM)%N_CUTCELL_MESH+MESHES(NM)%N_GCCUTCELL_MESH
-         DO JCC=1,CUT_CELL(ICC)%NCELL
-            CUT_CELL(ICC)%D(JCC) = 0._EB
-            CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC)=0._EB
-         ENDDO
-      ENDDO
-      IF (N_LP_ARRAY_INDICES>0 .OR. N_REACTIONS>0 .OR. ANY(SPECIES_MIXTURE%DEPOSITING)) THEN
-         DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
-            I     = CUT_CELL(ICC)%IJK(IAXIS)
-            J     = CUT_CELL(ICC)%IJK(JAXIS)
-            K     = CUT_CELL(ICC)%IJK(KAXIS)
-            VCELL = DX(I)*DY(J)*DZ(K)
+DO ICC=1,MESHES(NM)%N_CUTCELL_MESH+MESHES(NM)%N_GCCUTCELL_MESH
+   CUT_CELL(ICC)%DVOL(1:CUT_CELL(ICC)%NCELL)= 0._EB
+   CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:N_TOTAL_SCALARS,1:CUT_CELL(ICC)%NCELL)=0._EB
+ENDDO
+IF (CORRECTOR) THEN
+   IF (N_LP_ARRAY_INDICES>0 .OR. N_REACTIONS>0 .OR. ANY(SPECIES_MIXTURE%DEPOSITING)) THEN
+      DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
+         I     = CUT_CELL(ICC)%IJK(IAXIS)
+         J     = CUT_CELL(ICC)%IJK(JAXIS)
+         K     = CUT_CELL(ICC)%IJK(KAXIS)
+         VCELL = DX(I)*DY(J)*DZ(K)
 
-            ! Up to here in D_SOURCE(I,J,K), M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS) we have contributions by particles.
-            ! Add these contributions in corresponding cut-cells:
-            ! NOTE : Assumes the source from particles is distributed evely over CCs of the Cartesian cell.
-            VCCELL = SUM(CUT_CELL(ICC)%VOLUME(1:CUT_CELL(ICC)%NCELL))
-            DO JCC=1,CUT_CELL(ICC)%NCELL
-               CUT_CELL(ICC)%D_SOURCE(JCC) = CUT_CELL(ICC)%D_SOURCE(JCC) + D_SOURCE(I,J,K)*VCELL/VCCELL
-               CUT_CELL(ICC)%M_DOT_PPP(1:N_TOTAL_SCALARS,JCC) = CUT_CELL(ICC)%M_DOT_PPP(1:N_TOTAL_SCALARS,JCC) + &
-               M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS)*VCELL/VCCELL
-            ENDDO
-
-            ! Now Add back to D_SOURCE(I,J,K), M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS) for regular slice plotting:
-            D_SOURCE(I,J,K) = 0._EB; M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS) = 0._EB
-            DO JCC=1,CUT_CELL(ICC)%NCELL
-               D_SOURCE(I,J,K) = D_SOURCE(I,J,K) + CUT_CELL(ICC)%D_SOURCE(JCC)*CUT_CELL(ICC)%VOLUME(JCC)
-               M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS) = M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS) + &
-               CUT_CELL(ICC)%M_DOT_PPP(1:N_TOTAL_SCALARS,JCC)*CUT_CELL(ICC)%VOLUME(JCC)
-            ENDDO
-            D_SOURCE(I,J,K)=D_SOURCE(I,J,K)/VCELL
-            M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS) = M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS)/VCELL
+         ! Up to here in D_SOURCE(I,J,K), M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS) we have contributions by particles.
+         ! Add these contributions in corresponding cut-cells:
+         ! NOTE : Assumes the source from particles is distributed evely over CCs of the Cartesian cell.
+         VCCELL = SUM(CUT_CELL(ICC)%VOLUME(1:CUT_CELL(ICC)%NCELL))
+         DO JCC=1,CUT_CELL(ICC)%NCELL
+            CUT_CELL(ICC)%D_SOURCE(JCC) = CUT_CELL(ICC)%D_SOURCE(JCC) + D_SOURCE(I,J,K)*VCELL/VCCELL
+            CUT_CELL(ICC)%M_DOT_PPP(1:N_TOTAL_SCALARS,JCC) = CUT_CELL(ICC)%M_DOT_PPP(1:N_TOTAL_SCALARS,JCC) + &
+            M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS)*VCELL/VCCELL
          ENDDO
-      ENDIF
-END SELECT
+
+         ! Now Add back to D_SOURCE(I,J,K), M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS) for regular slice plotting:
+         D_SOURCE(I,J,K) = 0._EB; M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS) = 0._EB
+         DO JCC=1,CUT_CELL(ICC)%NCELL
+            D_SOURCE(I,J,K) = D_SOURCE(I,J,K) + CUT_CELL(ICC)%D_SOURCE(JCC)*CUT_CELL(ICC)%VOLUME(JCC)
+            M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS) = M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS) + &
+            CUT_CELL(ICC)%M_DOT_PPP(1:N_TOTAL_SCALARS,JCC)*CUT_CELL(ICC)%VOLUME(JCC)
+         ENDDO
+         D_SOURCE(I,J,K)=D_SOURCE(I,J,K)/VCELL
+         M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS) = M_DOT_PPP(I,J,K,1:N_TOTAL_SCALARS)/VCELL
+      ENDDO
+   ENDIF
+ENDIF
 
 IF (SET_DIV_TO_ZERO) THEN
    DP = 0._EB ! Set to zero divg on all cells.
@@ -4943,27 +5272,17 @@ DO K=1,KBAR
       DO I=1,IBAR
          IF (CCVAR(I,J,K,IBM_UNKZ) <= 0) CYCLE
          ! Add \dot{q}''' and QR to DP*Vii:
-         DP(I,J,K) = DP(I,J,K) + (Q(I,J,K) + QR(I,J,K)) * DX(I)*DY(J)*DZ(K)
+         DPVOL(I,J,K) = DPVOL(I,J,K) + (Q(I,J,K) + QR(I,J,K)) * DX(I)*DY(J)*DZ(K)
       ENDDO
    ENDDO
 ENDDO
 
-! HERE Cut-cells \dot{q}''' and QR:
-IF (PREDICTOR) THEN
-   DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
-      DO JCC=1,CUT_CELL(ICC)%NCELL
-         CUT_CELL(ICC)%DS(JCC) = CUT_CELL(ICC)%DS(JCC) + &
-         (CUT_CELL(ICC)%Q(JCC)+CUT_CELL(ICC)%QR(JCC)) * CUT_CELL(ICC)%VOLUME(JCC)
-      ENDDO
+! HERE Cut-cells \dot{q}'''*VOL and QR*VOL:
+DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
+   DO JCC=1,CUT_CELL(ICC)%NCELL
+      CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC)+(CUT_CELL(ICC)%Q(JCC)+CUT_CELL(ICC)%QR(JCC))*CUT_CELL(ICC)%VOLUME(JCC)
    ENDDO
-ELSE
-   DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
-      DO JCC=1,CUT_CELL(ICC)%NCELL
-         CUT_CELL(ICC)%D(JCC) = CUT_CELL(ICC)%D(JCC) + &
-         (CUT_CELL(ICC)%Q(JCC)+CUT_CELL(ICC)%QR(JCC)) * CUT_CELL(ICC)%VOLUME(JCC)
-      ENDDO
-   ENDDO
-ENDIF
+ENDDO
 
 ! 3. Enthalpy advection term = - \bar{ u dot Grad (rho h_s) }:
 ! R_H_G = 1/(Cp * T)
@@ -4999,8 +5318,8 @@ DO K=1,KBAR
          ZZ_GET(1:N_TRACKED_SPECIES) = ZZP(I,J,K,1:N_TRACKED_SPECIES)
          CALL GET_SPECIFIC_HEAT(ZZ_GET,CP(I,J,K),TMP(I,J,K))
          R_H_G(I,J,K) = 1._EB/(CP(I,J,K)*TMP(I,J,K))
-         RTRM(I,J,K) = R_H_G(I,J,K)/RHOP(I,J,K)
-         DP(I,J,K) = RTRM(I,J,K)*DP(I,J,K)
+         RTRM(I,J,K)  = R_H_G(I,J,K)/RHOP(I,J,K)
+         DPVOL(I,J,K) = RTRM(I,J,K)*DPVOL(I,J,K)
       ENDDO
    ENDDO
 ENDDO
@@ -5016,14 +5335,8 @@ DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
       CUT_CELL(ICC)%R_H_G(JCC) = 1._EB/(CPV(0)*TMPV(0))
       RHOPV(0) = PRFCT *CUT_CELL(ICC)%RHO(JCC) + &
           (1._EB-PRFCT)*CUT_CELL(ICC)%RHOS(JCC)
-      CUT_CELL(ICC)%RTRM(JCC)  = CUT_CELL(ICC)%R_H_G(JCC)/RHOPV(0)
-      IF (PREDICTOR) THEN
-         CUT_CELL(ICC)%DS(JCC) = &
-         CUT_CELL(ICC)%RTRM(JCC)*CUT_CELL(ICC)%DS(JCC)
-      ELSE
-         CUT_CELL(ICC)%D(JCC) = &
-         CUT_CELL(ICC)%RTRM(JCC)*CUT_CELL(ICC)%D(JCC)
-      ENDIF
+      CUT_CELL(ICC)%RTRM(JCC) = CUT_CELL(ICC)%R_H_G(JCC)/RHOPV(0)
+      CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%RTRM(JCC)*CUT_CELL(ICC)%DVOL(JCC)
    ENDDO
 ENDDO
 
@@ -5046,8 +5359,8 @@ CONST_GAMMA_IF_2: IF (.NOT.CONSTANT_SPECIFIC_HEAT_RATIO) THEN
             DO I=1,IBAR
                IF (CCVAR(I,J,K,IBM_UNKZ) <= 0) CYCLE
                CALL GET_SENSIBLE_ENTHALPY_Z(N,TMP(I,J,K),H_S)
-               DP(I,J,K) = DP(I,J,K) + (SM%RCON/RSUM(I,J,K) - H_S*R_H_G(I,J,K))* &
-                    ( DEL_RHO_D_DEL_Z(I,J,K,N) - U_DOT_DEL_RHO_Z(I,J,K) )/RHOP(I,J,K)
+               DPVOL(I,J,K) = DPVOL(I,J,K) + (SM%RCON/RSUM(I,J,K) - H_S*R_H_G(I,J,K))* &
+                                             (DEL_RHO_D_DEL_Z(I,J,K,N) - U_DOT_DEL_RHO_Z_VOL(I,J,K))/RHOP(I,J,K)
                ! Values of DEL_RHO_D_DEL_Z(I,J,K,N) have been filled previously.
                ! RSUM was computed in the implicit region advance routine for scalars CCDENSITY.
                ICC = ICC + 1
@@ -5061,10 +5374,9 @@ CONST_GAMMA_IF_2: IF (.NOT.CONSTANT_SPECIFIC_HEAT_RATIO) THEN
             DO JCC=1,CUT_CELL(ICC)%NCELL
                TMPV(0) = CUT_CELL(ICC)%TMP(JCC)
                CALL GET_SENSIBLE_ENTHALPY_Z(N,TMPV(0),H_S)
-               CUT_CELL(ICC)%DS(JCC) = CUT_CELL(ICC)%DS(JCC) + &
-              (SM%RCON/CUT_CELL(ICC)%RSUM(JCC) - &
-               H_S*CUT_CELL(ICC)%R_H_G(JCC))/CUT_CELL(ICC)%RHOS(JCC) * &
-              (CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(N,JCC)- CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC))
+               CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC) + &
+              (SM%RCON/CUT_CELL(ICC)%RSUM(JCC) - H_S*CUT_CELL(ICC)%R_H_G(JCC))/CUT_CELL(ICC)%RHOS(JCC) * &
+              (CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(N,JCC)- CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC))
             ENDDO
          ENDDO
       ELSE
@@ -5072,10 +5384,9 @@ CONST_GAMMA_IF_2: IF (.NOT.CONSTANT_SPECIFIC_HEAT_RATIO) THEN
             DO JCC=1,CUT_CELL(ICC)%NCELL
                TMPV(0) = CUT_CELL(ICC)%TMP(JCC)
                CALL GET_SENSIBLE_ENTHALPY_Z(N,TMPV(0),H_S)
-               CUT_CELL(ICC)%D(JCC) = CUT_CELL(ICC)%D(JCC) + &
-              (SM%RCON/CUT_CELL(ICC)%RSUM(JCC) - &
-               H_S*CUT_CELL(ICC)%R_H_G(JCC))/CUT_CELL(ICC)%RHO(JCC) * &
-              (CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(N,JCC)- CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC))
+               CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC) + &
+              (SM%RCON/CUT_CELL(ICC)%RSUM(JCC) - H_S*CUT_CELL(ICC)%R_H_G(JCC))/CUT_CELL(ICC)%RHO(JCC) * &
+              (CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(N,JCC)- CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC))
             ENDDO
          ENDDO
       ENDIF
@@ -5093,27 +5404,17 @@ IF (N_REACTIONS > 0 .OR. N_LP_ARRAY_INDICES>0 .OR. ANY(SPECIES_MIXTURE%DEPOSITIN
       DO J=1,JBAR
          DO I=1,IBAR
             IF (CCVAR(I,J,K,IBM_UNKZ) <= 0) CYCLE
-            DP(I,J,K) = DP(I,J,K) + D_SOURCE(I,J,K)*DX(I)*DY(J)*DZ(K)
+            DPVOL(I,J,K) = DPVOL(I,J,K) + D_SOURCE(I,J,K)*DX(I)*DY(J)*DZ(K)
          ENDDO
       ENDDO
    ENDDO
 
    ! Cut cells:
-   IF (PREDICTOR) THEN
-      DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
-         DO JCC=1,CUT_CELL(ICC)%NCELL
-            CUT_CELL(ICC)%DS(JCC) = CUT_CELL(ICC)%DS(JCC) + &
-                                    CUT_CELL(ICC)%D_SOURCE(JCC)*CUT_CELL(ICC)%VOLUME(JCC)
-         ENDDO
+   DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
+      DO JCC=1,CUT_CELL(ICC)%NCELL
+         CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC) + CUT_CELL(ICC)%D_SOURCE(JCC)*CUT_CELL(ICC)%VOLUME(JCC)
       ENDDO
-   ELSE
-      DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
-         DO JCC=1,CUT_CELL(ICC)%NCELL
-            CUT_CELL(ICC)%D(JCC)  = CUT_CELL(ICC)%D(JCC)  + &
-                                    CUT_CELL(ICC)%D_SOURCE(JCC)*CUT_CELL(ICC)%VOLUME(JCC)
-         ENDDO
-      ENDDO
-   ENDIF
+   ENDDO
 
 ENDIF
 
@@ -5125,30 +5426,17 @@ IF (STRATIFICATION) THEN
       DO J=1,JBAR
          DO I=1,IBAR
             IF (CCVAR(I,J,K,IBM_UNKZ) <= 0) CYCLE
-            DP(I,J,K) = DP(I,J,K) + RTRM(I,J,K)*0.5_EB*(WW(I,J,K)+WW(I,J,K-1))*RHO_0(K)*GVEC(KAXIS)*DX(I)*DY(J)*DZ(K)
+            DPVOL(I,J,K) = DPVOL(I,J,K) + RTRM(I,J,K)*0.5_EB*(WW(I,J,K)+WW(I,J,K-1))*RHO_0(K)*GVEC(KAXIS)*DX(I)*DY(J)*DZ(K)
          ENDDO
       ENDDO
    ENDDO
-
-   IF (PREDICTOR) THEN
-      DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
-         DO JCC=1,CUT_CELL(ICC)%NCELL
-            ! D = D + w*rho_0*g/(rho*Cp*T)*Vii
-            CUT_CELL(ICC)%DS(JCC) = CUT_CELL(ICC)%DS(JCC) +  &
-            CUT_CELL(ICC)%RTRM(JCC)*CUT_CELL(ICC)%WVEL(JCC)* &
-            CUT_CELL(ICC)%RHO_0(JCC)*GVEC(KAXIS)*CUT_CELL(ICC)%VOLUME(JCC)
-         ENDDO
+   DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
+      DO JCC=1,CUT_CELL(ICC)%NCELL
+         ! D = D + w*rho_0*g/(rho*Cp*T)*Vii
+         CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC) + CUT_CELL(ICC)%RTRM(JCC)*CUT_CELL(ICC)%WVEL(JCC)* &
+                                                             CUT_CELL(ICC)%RHO_0(JCC)*GVEC(KAXIS)*CUT_CELL(ICC)%VOLUME(JCC)
       ENDDO
-   ELSE ! CORRECTOR
-      DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
-         DO JCC=1,CUT_CELL(ICC)%NCELL
-            ! D = D + w*rho_0*g/(rho*Cp*T)*Vii
-            CUT_CELL(ICC)%D(JCC) = CUT_CELL(ICC)%D(JCC) +  &
-            CUT_CELL(ICC)%RTRM(JCC)*CUT_CELL(ICC)%WVEL(JCC)* &
-            CUT_CELL(ICC)%RHO_0(JCC)*GVEC(KAXIS)*CUT_CELL(ICC)%VOLUME(JCC)
-         ENDDO
-      ENDDO
-   ENDIF
+   ENDDO
 ENDIF
 
 ! Manufactured solution
@@ -5171,7 +5459,7 @@ MMS_IF: IF (PERIODIC_TEST==7) THEN
                   CASE(2); Q_Z =  VD2D_MMS_Z_SRC(XHAT,ZHAT,TT)
                END SELECT
                CALL GET_SENSIBLE_ENTHALPY_Z(N,TMP(I,J,K),H_S)
-               DP(I,J,K) = DP(I,J,K) + ( SM%RCON/RSUM(I,J,K) - H_S*R_H_G(I,J,K) )*Q_Z/RHOP(I,J,K)*DX(I)*DY(J)*DZ(K)
+               DPVOL(I,J,K) = DPVOL(I,J,K) + ( SM%RCON/RSUM(I,J,K) - H_S*R_H_G(I,J,K) )*Q_Z/RHOP(I,J,K)*DX(I)*DY(J)*DZ(K)
             ENDDO
          ENDDO
       ENDDO
@@ -5191,7 +5479,7 @@ MMS_IF: IF (PERIODIC_TEST==7) THEN
                   CASE(2); Q_Z =  VD2D_MMS_Z_SRC(XHAT,ZHAT,TT)
                END SELECT
                CALL GET_SENSIBLE_ENTHALPY_Z(N,TMPV(0),H_S)
-               CUT_CELL(ICC)%DS(JCC) = CUT_CELL(ICC)%DS(JCC) +  &
+               CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC) +  &
                (SM%RCON/CUT_CELL(ICC)%RSUM(JCC) - H_S*CUT_CELL(ICC)%R_H_G(JCC)) * &
                Q_Z/CUT_CELL(ICC)%RHOS(JCC)*CUT_CELL(ICC)%VOLUME(JCC)
             ENDDO
@@ -5211,7 +5499,7 @@ MMS_IF: IF (PERIODIC_TEST==7) THEN
                   CASE(2); Q_Z =  VD2D_MMS_Z_SRC(XHAT,ZHAT,TT)
                END SELECT
                CALL GET_SENSIBLE_ENTHALPY_Z(N,TMPV(0),H_S)
-               CUT_CELL(ICC)%D(JCC) = CUT_CELL(ICC)%D(JCC) +  &
+               CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC) +  &
                (SM%RCON/CUT_CELL(ICC)%RSUM(JCC) - H_S*CUT_CELL(ICC)%R_H_G(JCC)) * &
                Q_Z/CUT_CELL(ICC)%RHO(JCC)*CUT_CELL(ICC)%VOLUME(JCC)
             ENDDO
@@ -5224,10 +5512,10 @@ ENDIF MMS_IF
 AVERAGE_LINKDIV_IF: IF (AVERAGE_LINKDIV) THEN
 
    ! Average divergence on linked cells:
-   ALLOCATE ( DIVRG_VOL(1:NUNKZ_LOCAL) , VOLDVRG(1:NUNKZ_LOCAL), RTRM_VOL(1:NUNKZ_LOCAL) )
-   DIVRG_VOL(:) = 0._EB
+   ALLOCATE ( DIVRG_VEC(1:NUNKZ_LOCAL) , VOLDVRG(1:NUNKZ_LOCAL), RTRM_VEC(1:NUNKZ_LOCAL) )
+   DIVRG_VEC(:) = 0._EB
    VOLDVRG(:)   = 0._EB
-   RTRM_VOL(:)  = 0._EB
+   RTRM_VEC(:)  = 0._EB
 
    ! Add div*vol for all cells and cut-cells on implicit region:
    ! Regular cells:
@@ -5237,8 +5525,8 @@ AVERAGE_LINKDIV_IF: IF (AVERAGE_LINKDIV) THEN
             IF (CCVAR(I,J,K,IBM_UNKZ) <= 0) CYCLE
             ! Unknown number:
             INDZ  = CCVAR(I,J,K,IBM_UNKZ) - UNKZ_IND(NM_START) ! All row indexes must refer to ind_loc.
-            DIVRG_VOL(INDZ) =  DIVRG_VOL(INDZ) + DP(I,J,K)
-            RTRM_VOL(INDZ)  =  RTRM_VOL(INDZ)  + RTRM(I,J,K)*(DX(I)*DY(J)*DZ(K))
+            DIVRG_VEC(INDZ) =  DIVRG_VEC(INDZ) + DPVOL(I,J,K)
+            RTRM_VEC(INDZ)  =  RTRM_VEC(INDZ)  + RTRM(I,J,K)*(DX(I)*DY(J)*DZ(K))
             VOLDVRG(INDZ)   =  VOLDVRG(INDZ)   + (DX(I)*DY(J)*DZ(K))
          ENDDO
       ENDDO
@@ -5251,8 +5539,8 @@ AVERAGE_LINKDIV_IF: IF (AVERAGE_LINKDIV) THEN
          K      = CUT_CELL(ICC)%IJK(KAXIS)
          DO JCC=1,CUT_CELL(ICC)%NCELL
             INDZ = CUT_CELL(ICC)%UNKZ(JCC) - UNKZ_IND(NM_START)
-            DIVRG_VOL(INDZ) =  DIVRG_VOL(INDZ) + CUT_CELL(ICC)%DS(JCC)
-            RTRM_VOL(INDZ)  =  RTRM_VOL(INDZ)  + CUT_CELL(ICC)%RTRM(JCC)*CUT_CELL(ICC)%VOLUME(JCC)
+            DIVRG_VEC(INDZ) =  DIVRG_VEC(INDZ) + CUT_CELL(ICC)%DVOL(JCC)
+            RTRM_VEC(INDZ)  =  RTRM_VEC(INDZ)  + CUT_CELL(ICC)%RTRM(JCC)*CUT_CELL(ICC)%VOLUME(JCC)
             VOLDVRG(INDZ)   =  VOLDVRG(INDZ)   + CUT_CELL(ICC)%VOLUME(JCC)
          ENDDO
       ENDDO
@@ -5263,8 +5551,8 @@ AVERAGE_LINKDIV_IF: IF (AVERAGE_LINKDIV) THEN
          K      = CUT_CELL(ICC)%IJK(KAXIS)
          DO JCC=1,CUT_CELL(ICC)%NCELL
             INDZ = CUT_CELL(ICC)%UNKZ(JCC) - UNKZ_IND(NM_START)
-            DIVRG_VOL(INDZ) =  DIVRG_VOL(INDZ) + CUT_CELL(ICC)%D(JCC)
-            RTRM_VOL(INDZ)  =  RTRM_VOL(INDZ)  + CUT_CELL(ICC)%RTRM(JCC)*CUT_CELL(ICC)%VOLUME(JCC)
+            DIVRG_VEC(INDZ) =  DIVRG_VEC(INDZ) + CUT_CELL(ICC)%DVOL(JCC)
+            RTRM_VEC(INDZ)  =  RTRM_VEC(INDZ)  + CUT_CELL(ICC)%RTRM(JCC)*CUT_CELL(ICC)%VOLUME(JCC)
             VOLDVRG(INDZ)   =  VOLDVRG(INDZ)   + CUT_CELL(ICC)%VOLUME(JCC)
          ENDDO
       ENDDO
@@ -5275,8 +5563,8 @@ AVERAGE_LINKDIV_IF: IF (AVERAGE_LINKDIV) THEN
 
    ! Compute final divergence:
    DO INDZ=UNKZ_ILC(NM)+1,UNKZ_ILC(NM)+NUNKZ_LOC(NM)
-      DIVRG_VOL(INDZ)=DIVRG_VOL(INDZ)/VOLDVRG(INDZ)
-      RTRM_VOL(INDZ) = RTRM_VOL(INDZ)/VOLDVRG(INDZ)
+      DIVRG_VEC(INDZ)=DIVRG_VEC(INDZ)/VOLDVRG(INDZ)
+      RTRM_VEC(INDZ) = RTRM_VEC(INDZ)/VOLDVRG(INDZ)
    ENDDO
 
    ! Finally load final thermodynamic divergence to corresponding cells:
@@ -5286,8 +5574,8 @@ AVERAGE_LINKDIV_IF: IF (AVERAGE_LINKDIV) THEN
          DO I=1,IBAR
             IF (CCVAR(I,J,K,IBM_UNKZ) <= 0) CYCLE
             INDZ  = CCVAR(I,J,K,IBM_UNKZ) - UNKZ_IND(NM_START)
-            DP(I,J,K) = DIVRG_VOL(INDZ)
-            RTRM(I,J,K) = RTRM_VOL(INDZ)
+            DP(I,J,K)   = DIVRG_VEC(INDZ) ! Previously divided by VOL.
+            RTRM(I,J,K) = RTRM_VEC(INDZ)  ! Previously divided by VOL.
             DEL_RHO_D_DEL_Z(I,J,K,1:N_TRACKED_SPECIES) = DEL_RHO_D_DEL_Z(I,J,K,1:N_TRACKED_SPECIES)/(DX(I)*DY(J)*DZ(K))
          ENDDO
       ENDDO
@@ -5302,9 +5590,10 @@ AVERAGE_LINKDIV_IF: IF (AVERAGE_LINKDIV) THEN
          RTRMVOL= 0._EB
          DO JCC=1,CUT_CELL(ICC)%NCELL
             INDZ = CUT_CELL(ICC)%UNKZ(JCC) - UNKZ_IND(NM_START)
-            CUT_CELL(ICC)%DS(JCC)  = DIVRG_VOL(INDZ)*CUT_CELL(ICC)%VOLUME(JCC)
-            CUT_CELL(ICC)%RTRM(JCC)= RTRM_VOL(INDZ)
-            DIVVOL = DIVVOL + CUT_CELL(ICC)%DS(JCC)
+            CUT_CELL(ICC)%DVOL(JCC)= DIVRG_VEC(INDZ)*CUT_CELL(ICC)%VOLUME(JCC)
+            CUT_CELL(ICC)%DS(JCC)  = DIVRG_VEC(INDZ)
+            CUT_CELL(ICC)%RTRM(JCC)= RTRM_VEC(INDZ)
+            DIVVOL = DIVVOL + CUT_CELL(ICC)%DVOL(JCC)
             RTRMVOL= RTRMVOL+ CUT_CELL(ICC)%RTRM(JCC)*CUT_CELL(ICC)%VOLUME(JCC)
          ENDDO
 
@@ -5330,9 +5619,10 @@ AVERAGE_LINKDIV_IF: IF (AVERAGE_LINKDIV) THEN
          RTRMVOL= 0._EB
          DO JCC=1,CUT_CELL(ICC)%NCELL
             INDZ = CUT_CELL(ICC)%UNKZ(JCC) - UNKZ_IND(NM_START)
-            CUT_CELL(ICC)%D(JCC)   = DIVRG_VOL(INDZ)*CUT_CELL(ICC)%VOLUME(JCC)
-            CUT_CELL(ICC)%RTRM(JCC)= RTRM_VOL(INDZ)
-            DIVVOL = DIVVOL + CUT_CELL(ICC)%D(JCC)
+            CUT_CELL(ICC)%DVOL(JCC)= DIVRG_VEC(INDZ)*CUT_CELL(ICC)%VOLUME(JCC)
+            CUT_CELL(ICC)%D(JCC)   = DIVRG_VEC(INDZ)
+            CUT_CELL(ICC)%RTRM(JCC)= RTRM_VEC(INDZ)
+            DIVVOL = DIVVOL + CUT_CELL(ICC)%DVOL(JCC)
             RTRMVOL= RTRMVOL+ CUT_CELL(ICC)%RTRM(JCC)*CUT_CELL(ICC)%VOLUME(JCC)
          ENDDO
 
@@ -5350,7 +5640,7 @@ AVERAGE_LINKDIV_IF: IF (AVERAGE_LINKDIV) THEN
          RTRM(I,J,K)= RTRMVOL/(DX(I)*DY(J)*DZ(K))
       ENDDO
    ENDIF
-   DEALLOCATE ( DIVRG_VOL , VOLDVRG, RTRM_VOL )
+   DEALLOCATE ( DIVRG_VEC , VOLDVRG, RTRM_VEC )
 
 ELSE AVERAGE_LINKDIV_IF
 
@@ -5359,7 +5649,7 @@ ELSE AVERAGE_LINKDIV_IF
       DO J=1,JBAR
          DO I=1,IBAR
             IF (CCVAR(I,J,K,IBM_UNKZ) <= 0) CYCLE
-            DP(I,J,K) = DP(I,J,K)/(DX(I)*DY(J)*DZ(K))
+            DP(I,J,K) = DPVOL(I,J,K)/(DX(I)*DY(J)*DZ(K))
             DEL_RHO_D_DEL_Z(I,J,K,1:N_TRACKED_SPECIES) = DEL_RHO_D_DEL_Z(I,J,K,1:N_TRACKED_SPECIES)/(DX(I)*DY(J)*DZ(K))
          ENDDO
       ENDDO
@@ -5372,7 +5662,7 @@ ELSE AVERAGE_LINKDIV_IF
          K      = CUT_CELL(ICC)%IJK(KAXIS)
          DIVVOL = 0._EB
          DO JCC=1,CUT_CELL(ICC)%NCELL
-            DIVVOL = DIVVOL + CUT_CELL(ICC)%DS(JCC)
+            DIVVOL = DIVVOL + CUT_CELL(ICC)%DVOL(JCC)
          ENDDO
          DP(I,J,K) = DIVVOL/(DX(I)*DY(J)*DZ(K))
       ENDDO
@@ -5385,7 +5675,7 @@ ELSE AVERAGE_LINKDIV_IF
 
          DIVVOL = 0._EB
          DO JCC=1,CUT_CELL(ICC)%NCELL
-            DIVVOL = DIVVOL + CUT_CELL(ICC)%D(JCC)
+            DIVVOL = DIVVOL + CUT_CELL(ICC)%DVOL(JCC)
             MINVOL=MIN(MINVOL,CUT_CELL(ICC)%VOLUME(JCC))
          ENDDO
          DP(I,J,K) = DIVVOL/(DX(I)*DY(J)*DZ(K))
@@ -5398,7 +5688,9 @@ ENDIF AVERAGE_LINKDIV_IF
 DEALLOCATE(ZZ_GET)
 
 T_USED(14) = T_USED(14) + CURRENT_TIME() - TNOW
-
+#ifdef TIME_CC_IBM
+T_CC_USED(CCREGION_DIVERGENCE_PART_1_TIME_INDEX) = T_CC_USED(CCREGION_DIVERGENCE_PART_1_TIME_INDEX) + CURRENT_TIME() - TNOW
+#endif
 RETURN
 
 CONTAINS
@@ -5575,16 +5867,15 @@ REAL(EB), PARAMETER :: SGNFCT=1._EB
 INTEGER :: IOR, ICFA
 
 
-U_DOT_DEL_RHO_Z=>WORK7
-U_DOT_DEL_RHO_Z=0._EB
+U_DOT_DEL_RHO_Z_VOL=>WORK7
+U_DOT_DEL_RHO_Z_VOL=0._EB
 
 ! Zero out  for species N in cut-cells:
 DO ICC=1,MESHES(NM)%N_CUTCELL_MESH+MESHES(NM)%N_GCCUTCELL_MESH
    DO JCC=1,CUT_CELL(ICC)%NCELL
-      CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC) = 0._EB
+      CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC) = 0._EB
    ENDDO
 ENDDO
-
 
 IF (.NOT.ENTHALPY_TRANSPORT) RETURN
 
@@ -5612,10 +5903,8 @@ DO IFACE=1,MESHES(NM)%IBM_NREGFACE_Z(X1AXIS)
    FN_ZZ = (AM_P1*RHO_Z_PV(-1)+AP_P1*RHO_Z_PV(0)) ! bar{rho*zz}
    ! Add: -(bar{rho*zz} u dot n - (rho*zz) u dot n) to corresponding cell DP:
    AF = DY(J)*DZ(K)
-   U_DOT_DEL_RHO_Z(I+FCELL-1,J,K) = U_DOT_DEL_RHO_Z(I+FCELL-1,J,K) + &
-                                    SGNFCT*(FN_ZZ-RHO_Z_PV(-1))*VELC*AF ! +ve dot
-   U_DOT_DEL_RHO_Z(I+FCELL  ,J,K) = U_DOT_DEL_RHO_Z(I+FCELL  ,J,K) - &
-                                    SGNFCT*(FN_ZZ-RHO_Z_PV( 0))*VELC*AF ! -ve dot
+   U_DOT_DEL_RHO_Z_VOL(I+FCELL-1,J,K) = U_DOT_DEL_RHO_Z_VOL(I+FCELL-1,J,K) + SGNFCT*(FN_ZZ-RHO_Z_PV(-1))*VELC*AF ! +ve dot
+   U_DOT_DEL_RHO_Z_VOL(I+FCELL  ,J,K) = U_DOT_DEL_RHO_Z_VOL(I+FCELL  ,J,K) - SGNFCT*(FN_ZZ-RHO_Z_PV( 0))*VELC*AF ! -ve dot
 ENDDO
 
 ! JAXIS faces:
@@ -5642,10 +5931,8 @@ DO IFACE=1,MESHES(NM)%IBM_NREGFACE_Z(X1AXIS)
    FN_ZZ = (AM_P1*RHO_Z_PV(-1)+AP_P1*RHO_Z_PV(0)) ! bar{rho*zz}
    ! Add: -(bar{rho*zz} u dot n - (rho*zz) u dot n) to corresponding cell DP:
    AF = DX(I)*DZ(K)
-   U_DOT_DEL_RHO_Z(I,J+FCELL-1,K) = U_DOT_DEL_RHO_Z(I,J+FCELL-1,K) + &
-                                    SGNFCT*(FN_ZZ-RHO_Z_PV(-1))*VELC*AF ! +ve dot
-   U_DOT_DEL_RHO_Z(I,J+FCELL  ,K) = U_DOT_DEL_RHO_Z(I,J+FCELL  ,K) - &
-                                    SGNFCT*(FN_ZZ-RHO_Z_PV( 0))*VELC*AF ! -ve dot
+   U_DOT_DEL_RHO_Z_VOL(I,J+FCELL-1,K) = U_DOT_DEL_RHO_Z_VOL(I,J+FCELL-1,K) + SGNFCT*(FN_ZZ-RHO_Z_PV(-1))*VELC*AF ! +ve dot
+   U_DOT_DEL_RHO_Z_VOL(I,J+FCELL  ,K) = U_DOT_DEL_RHO_Z_VOL(I,J+FCELL  ,K) - SGNFCT*(FN_ZZ-RHO_Z_PV( 0))*VELC*AF ! -ve dot
 ENDDO
 
 ! KAXIS faces:
@@ -5672,10 +5959,8 @@ DO IFACE=1,MESHES(NM)%IBM_NREGFACE_Z(X1AXIS)
    FN_ZZ = (AM_P1*RHO_Z_PV(-1)+AP_P1*RHO_Z_PV(0)) ! bar{rho*zz}
    ! Add: -(bar{rho*zz} u dot n - (rho*zz) u dot n) to corresponding cell DP:
    AF = DX(I)*DY(J)
-   U_DOT_DEL_RHO_Z(I,J,K+FCELL-1) = U_DOT_DEL_RHO_Z(I,J,K+FCELL-1) + &
-                                    SGNFCT*(FN_ZZ-RHO_Z_PV(-1))*VELC*AF ! +ve dot
-   U_DOT_DEL_RHO_Z(I,J,K+FCELL  ) = U_DOT_DEL_RHO_Z(I,J,K+FCELL  ) - &
-                                    SGNFCT*(FN_ZZ-RHO_Z_PV( 0))*VELC*AF ! -ve dot
+   U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL-1) = U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL-1) + SGNFCT*(FN_ZZ-RHO_Z_PV(-1))*VELC*AF ! +ve dot
+   U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL  ) = U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL  ) - SGNFCT*(FN_ZZ-RHO_Z_PV( 0))*VELC*AF ! -ve dot
 ENDDO
 
 
@@ -5716,13 +6001,13 @@ DO IFACE=1,MESHES(NM)%IBM_NRCFACE_Z
             FCT = -REAL(2*ISIDE+1,EB) ! Factor to set +ve or -ve sign of dot with normal outside.
             SELECT CASE(IBM_RCFACE_Z(IFACE)%CELL_LIST(1,ISIDE+2))
             CASE(IBM_FTYPE_RGGAS) ! Regular cell
-               U_DOT_DEL_RHO_Z(I+FCELL+ISIDE,J,K) = U_DOT_DEL_RHO_Z(I+FCELL+ISIDE,J,K) + &
+               U_DOT_DEL_RHO_Z_VOL(I+FCELL+ISIDE,J,K) = U_DOT_DEL_RHO_Z_VOL(I+FCELL+ISIDE,J,K) + &
                FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC * AF ! +ve or -ve dot
             CASE(IBM_FTYPE_CFGAS) ! Cut-cell
                ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
                IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE ! Cut-cell is guard-cell cc.
                JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-               CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC) = CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC) + &
+               CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC) = CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC) + &
                FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC * AF ! +ve or -ve dot
             END SELECT
          ENDDO
@@ -5752,13 +6037,13 @@ DO IFACE=1,MESHES(NM)%IBM_NRCFACE_Z
             FCT = -REAL(2*ISIDE+1,EB) ! Factor to set +ve or -ve sign of dot with normal outside.
             SELECT CASE(IBM_RCFACE_Z(IFACE)%CELL_LIST(1,ISIDE+2))
             CASE(IBM_FTYPE_RGGAS) ! Regular cell
-               U_DOT_DEL_RHO_Z(I,J+FCELL+ISIDE,K) = U_DOT_DEL_RHO_Z(I,J+FCELL+ISIDE,K) + &
+               U_DOT_DEL_RHO_Z_VOL(I,J+FCELL+ISIDE,K) = U_DOT_DEL_RHO_Z_VOL(I,J+FCELL+ISIDE,K) + &
                FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC * AF ! +ve or -ve dot
             CASE(IBM_FTYPE_CFGAS) ! Cut-cell
                ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
                IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE ! Cut-cell is guard-cell cc.
                JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-               CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC) = CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC) + &
+               CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC) = CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC) + &
                FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC * AF ! +ve or -ve dot
             END SELECT
          ENDDO
@@ -5788,13 +6073,13 @@ DO IFACE=1,MESHES(NM)%IBM_NRCFACE_Z
             FCT = -REAL(2*ISIDE+1,EB) ! Factor to set +ve or -ve sign of dot with normal outside.
             SELECT CASE(IBM_RCFACE_Z(IFACE)%CELL_LIST(1,ISIDE+2))
             CASE(IBM_FTYPE_RGGAS) ! Regular cell
-               U_DOT_DEL_RHO_Z(I,J,K+FCELL+ISIDE) = U_DOT_DEL_RHO_Z(I,J,K+FCELL+ISIDE) + &
+               U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL+ISIDE) = U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL+ISIDE) + &
                FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC * AF ! +ve or -ve dot
             CASE(IBM_FTYPE_CFGAS) ! Cut-cell
                ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
                IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE ! Cut-cell is guard-cell cc.
                JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-               CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC) = CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC) + &
+               CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC) = CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC) + &
                FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC * AF ! +ve or -ve dot
             END SELECT
          ENDDO
@@ -5838,7 +6123,7 @@ DO ICF = 1,MESHES(NM)%N_CUTFACE_MESH
             ICC = CUT_FACE(ICF)%CELL_LIST(2,ISIDE+2,IFACE)
             IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE ! Cut-cell is guard-cell cc.
             JCC = CUT_FACE(ICF)%CELL_LIST(3,ISIDE+2,IFACE)
-            CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC) = CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC) + &
+            CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC) = CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC) + &
             FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC * AF ! +ve or -ve dot
          END SELECT
       ENDDO
@@ -5873,8 +6158,8 @@ DO IFACE=1,MESHES(NM)%IBM_NBBREGFACE_Z(X1AXIS)
    END SELECT
    ! Add: -(bar{rho*zz} u dot n - (rho*zz) u dot n) to corresponding cell DP:
    AF = DY(J)*DZ(K)
-   U_DOT_DEL_RHO_Z(I+FCELL+ISIDE,J,K) = U_DOT_DEL_RHO_Z(I+FCELL+ISIDE,J,K) - &
-                                        SIGN(1._EB,REAL(IOR,EB))*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
+   U_DOT_DEL_RHO_Z_VOL(I+FCELL+ISIDE,J,K) = U_DOT_DEL_RHO_Z_VOL(I+FCELL+ISIDE,J,K) - &
+                                            SIGN(1._EB,REAL(IOR,EB))*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
 ENDDO
 
 ! JAXIS faces:
@@ -5904,8 +6189,8 @@ DO IFACE=1,MESHES(NM)%IBM_NBBREGFACE_Z(X1AXIS)
    END SELECT
    ! Add: -(bar{rho*zz} u dot n - (rho*zz) u dot n) to corresponding cell DP:
    AF = DX(I)*DZ(K)
-   U_DOT_DEL_RHO_Z(I,J+FCELL+ISIDE,K) = U_DOT_DEL_RHO_Z(I,J+FCELL+ISIDE,K) - &
-                                        SIGN(1._EB,REAL(IOR,EB))*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
+   U_DOT_DEL_RHO_Z_VOL(I,J+FCELL+ISIDE,K) = U_DOT_DEL_RHO_Z_VOL(I,J+FCELL+ISIDE,K) - &
+                                            SIGN(1._EB,REAL(IOR,EB))*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
 ENDDO
 
 ! KAXIS faces:
@@ -5935,8 +6220,8 @@ DO IFACE=1,MESHES(NM)%IBM_NBBREGFACE_Z(X1AXIS)
    END SELECT
    ! Add: -(bar{rho*zz} u dot n - (rho*zz) u dot n) to corresponding cell DP:
    AF = DX(I)*DY(J)
-   U_DOT_DEL_RHO_Z(I,J,K+FCELL+ISIDE) = U_DOT_DEL_RHO_Z(I,J,K+FCELL+ISIDE) - &
-                                        SIGN(1._EB,REAL(IOR,EB))*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
+   U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL+ISIDE) = U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL+ISIDE) - &
+                                            SIGN(1._EB,REAL(IOR,EB))*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
 ENDDO
 
 ! Regular Faces connecting gasphase cells to cut-cells:
@@ -6010,17 +6295,16 @@ DO IFACE=1,MESHES(NM)%IBM_NBBRCFACE_Z
    CASE(IBM_FTYPE_RGGAS)
       SELECT CASE(X1AXIS)
       CASE(IAXIS)
-        U_DOT_DEL_RHO_Z(I+FCELL+ISIDE,J,K)=U_DOT_DEL_RHO_Z(I+FCELL+ISIDE,J,K)+FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
+        U_DOT_DEL_RHO_Z_VOL(I+FCELL+ISIDE,J,K)=U_DOT_DEL_RHO_Z_VOL(I+FCELL+ISIDE,J,K)+FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
       CASE(JAXIS)
-        U_DOT_DEL_RHO_Z(I,J+FCELL+ISIDE,K)=U_DOT_DEL_RHO_Z(I,J+FCELL+ISIDE,K)+FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
+        U_DOT_DEL_RHO_Z_VOL(I,J+FCELL+ISIDE,K)=U_DOT_DEL_RHO_Z_VOL(I,J+FCELL+ISIDE,K)+FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
       CASE(KAXIS)
-        U_DOT_DEL_RHO_Z(I,J,K+FCELL+ISIDE)=U_DOT_DEL_RHO_Z(I,J,K+FCELL+ISIDE)+FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
+        U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL+ISIDE)=U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL+ISIDE)+FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
       END SELECT
    CASE(IBM_FTYPE_CFGAS) ! Cut-cell
       ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
       JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-      CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC)=CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC) + &
-                                           FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
+      CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC)=CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC)+FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
    END SELECT
 ENDDO
 
@@ -6043,13 +6327,12 @@ DO ICF = 1,MESHES(NM)%N_BBCUTFACE_MESH
       VELC = PRFCT*CUT_FACE(ICF)%VEL(IFACE) + (1._EB-PRFCT)*CUT_FACE(ICF)%VELS(IFACE)
       ! First (rho hs)_i,j,k:
       IF (CUT_FACE(ICF)%CELL_LIST(1,ISIDE+2,IFACE) == IBM_FTYPE_CFGAS) THEN
-         ICC = CUT_FACE(ICF)%CELL_LIST(2,ISIDE+2,IFACE)
-         JCC = CUT_FACE(ICF)%CELL_LIST(3,ISIDE+2,IFACE)
-         RHOPV(ISIDE) = PRFCT *CUT_CELL(ICC)%RHO(JCC) + (1._EB-PRFCT) *CUT_CELL(ICC)%RHOS(JCC)
-         ZZ_GET_N     = PRFCT*CUT_CELL(ICC)%ZZ(N,JCC) + (1._EB-PRFCT)*CUT_CELL(ICC)%ZZS(N,JCC)
-         RHO_Z_PV(ISIDE) = RHOPV(ISIDE)*ZZ_GET_N
-         CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC)=CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC) + &
-                                              FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
+        ICC = CUT_FACE(ICF)%CELL_LIST(2,ISIDE+2,IFACE)
+        JCC = CUT_FACE(ICF)%CELL_LIST(3,ISIDE+2,IFACE)
+        RHOPV(ISIDE) = PRFCT *CUT_CELL(ICC)%RHO(JCC) + (1._EB-PRFCT) *CUT_CELL(ICC)%RHOS(JCC)
+        ZZ_GET_N     = PRFCT*CUT_CELL(ICC)%ZZ(N,JCC) + (1._EB-PRFCT)*CUT_CELL(ICC)%ZZS(N,JCC)
+        RHO_Z_PV(ISIDE) = RHOPV(ISIDE)*ZZ_GET_N
+        CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC)=CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC)+FCT*SGNFCT*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
       ENDIF
    ENDDO ! IFACE
 ENDDO ! ICF
@@ -6064,21 +6347,16 @@ CFACE_LOOP : DO ICFA=1,N_CFACE_CELLS
    IND2=CFA%CUT_FACE_IND2
    ICC = CUT_FACE(IND1)%CELL_LIST(2,LOW_IND,IND2)
    JCC = CUT_FACE(IND1)%CELL_LIST(3,LOW_IND,IND2)
-   AF = CFA%AREA
-   IF (PREDICTOR) THEN
-      VELC = CFA%ONE_D%U_NORMAL_S
-   ELSE
-      VELC = CFA%ONE_D%U_NORMAL
-   ENDIF
+   AF  = CFA%AREA
+   VELC= PRFCT*CFA%ONE_D%U_NORMAL + (1._EB-PRFCT)*CFA%ONE_D%U_NORMAL_S
    ! Takes place of flux limited interpolation:
-   FN_ZZ           = CFA%ONE_D%RHO_F * CFA%ONE_D%ZZ_F(N)
-
+   FN_ZZ        = CFA%ONE_D%RHO_F * CFA%ONE_D%ZZ_F(N)
    RHOPV(ISIDE) = PRFCT *CUT_CELL(ICC)%RHO(JCC) + (1._EB-PRFCT) *CUT_CELL(ICC)%RHOS(JCC)
    ZZ_GET_N     = PRFCT*CUT_CELL(ICC)%ZZ(N,JCC) + (1._EB-PRFCT)*CUT_CELL(ICC)%ZZS(N,JCC)
    ! Cut-cell value of rho*Z:
    RHO_Z_PV(ISIDE) = RHOPV(ISIDE)*ZZ_GET_N
    ! Add to U_DOT_DEL_RHO_Z:                                        ! (\bar{rho*Z}_CFACE - (rho*Z)_CC)*VELOUT*AF
-   CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC)=CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(N,JCC) + (FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
+   CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC)=CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(N,JCC) + (FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
 ENDDO CFACE_LOOP
 
 ! EXIM faces:
@@ -6121,20 +6399,20 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
           RHOPV(ISIDE)    = RHOP(I+FCELL+ISIDE,J,K)
           RHO_Z_PV(ISIDE) = RHOPV(ISIDE)*ZZP(I+FCELL+ISIDE,J,K,N)
           AF = DY(J)*DZ(K)
-          U_DOT_DEL_RHO_Z(I+FCELL+ISIDE,J,K) = U_DOT_DEL_RHO_Z(I+FCELL+ISIDE,J,K) - &
-                                               SIGN(1._EB,REAL(IOR,EB))*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
+          U_DOT_DEL_RHO_Z_VOL(I+FCELL+ISIDE,J,K) = U_DOT_DEL_RHO_Z_VOL(I+FCELL+ISIDE,J,K) - &
+                                                   SIGN(1._EB,REAL(IOR,EB))*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
        CASE(JAXIS)
           RHOPV(ISIDE)    = RHOP(I,J+FCELL+ISIDE,K)
           RHO_Z_PV(ISIDE) = RHOPV(ISIDE)*ZZP(I,J+FCELL+ISIDE,K,N)
           AF = DX(I)*DZ(K)
-          U_DOT_DEL_RHO_Z(I,J+FCELL+ISIDE,K) = U_DOT_DEL_RHO_Z(I,J+FCELL+ISIDE,K) - &
-                                               SIGN(1._EB,REAL(IOR,EB))*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
+          U_DOT_DEL_RHO_Z_VOL(I,J+FCELL+ISIDE,K) = U_DOT_DEL_RHO_Z_VOL(I,J+FCELL+ISIDE,K) - &
+                                                   SIGN(1._EB,REAL(IOR,EB))*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
        CASE(KAXIS)
           RHOPV(ISIDE)    = RHOP(I,J,K+FCELL+ISIDE)
           RHO_Z_PV(ISIDE) = RHOPV(ISIDE)*ZZP(I,J,K+FCELL+ISIDE,N)
           AF = DX(I)*DY(J)
-          U_DOT_DEL_RHO_Z(I,J,K+FCELL+ISIDE) = U_DOT_DEL_RHO_Z(I,J,K+FCELL+ISIDE) - &
-                                               SIGN(1._EB,REAL(IOR,EB))*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
+          U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL+ISIDE) = U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL+ISIDE) - &
+                                                   SIGN(1._EB,REAL(IOR,EB))*(FN_ZZ-RHO_Z_PV(ISIDE))*VELC*AF
        END SELECT
 
    ELSE ! Regular cases and internal EXIM faces:
@@ -6148,9 +6426,9 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
          VELC = UU(I,J,K)
          IF ( (IW>0) .AND. (WALL(IW)%BOUNDARY_TYPE==INTERPOLATED_BOUNDARY) ) VELC = UVW_SAVE(IW)
          IF(LHFACE == LOW_IND) THEN ! Face on low side of cell
-            U_DOT_DEL_RHO_Z(I+FCELL  ,J,K)=U_DOT_DEL_RHO_Z(I+FCELL  ,J,K)-SGNFCT*(FN_ZZ-RHO_Z_PV( 0))*VELC*AF ! -ve dot
+            U_DOT_DEL_RHO_Z_VOL(I+FCELL  ,J,K)=U_DOT_DEL_RHO_Z_VOL(I+FCELL  ,J,K)-SGNFCT*(FN_ZZ-RHO_Z_PV( 0))*VELC*AF ! -ve dot
          ELSE ! Face on high side of cell
-            U_DOT_DEL_RHO_Z(I+FCELL-1,J,K)=U_DOT_DEL_RHO_Z(I+FCELL-1,J,K)+SGNFCT*(FN_ZZ-RHO_Z_PV(-1))*VELC*AF ! +ve dot
+            U_DOT_DEL_RHO_Z_VOL(I+FCELL-1,J,K)=U_DOT_DEL_RHO_Z_VOL(I+FCELL-1,J,K)+SGNFCT*(FN_ZZ-RHO_Z_PV(-1))*VELC*AF ! +ve dot
          ENDIF
       CASE(JAXIS)
          RHOPV(-1:0)  = RHOP(I,J+FCELL-1:J+FCELL,K)
@@ -6160,9 +6438,9 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
          VELC = VV(I,J,K)
          IF ( (IW>0) .AND. (WALL(IW)%BOUNDARY_TYPE==INTERPOLATED_BOUNDARY) ) VELC = UVW_SAVE(IW)
          IF(LHFACE == LOW_IND) THEN ! Face on low side of cell
-            U_DOT_DEL_RHO_Z(I,J+FCELL  ,K)=U_DOT_DEL_RHO_Z(I,J+FCELL  ,K)-SGNFCT*(FN_ZZ-RHO_Z_PV( 0))*VELC*AF ! -ve dot
+            U_DOT_DEL_RHO_Z_VOL(I,J+FCELL  ,K)=U_DOT_DEL_RHO_Z_VOL(I,J+FCELL  ,K)-SGNFCT*(FN_ZZ-RHO_Z_PV( 0))*VELC*AF ! -ve dot
          ELSE ! Face on high side of cell
-            U_DOT_DEL_RHO_Z(I,J+FCELL-1,K)=U_DOT_DEL_RHO_Z(I,J+FCELL-1,K)+SGNFCT*(FN_ZZ-RHO_Z_PV(-1))*VELC*AF ! +ve dot
+            U_DOT_DEL_RHO_Z_VOL(I,J+FCELL-1,K)=U_DOT_DEL_RHO_Z_VOL(I,J+FCELL-1,K)+SGNFCT*(FN_ZZ-RHO_Z_PV(-1))*VELC*AF ! +ve dot
          ENDIF
       CASE(KAXIS)
          RHOPV(-1:0)  = RHOP(I,J,K+FCELL-1:K+FCELL)
@@ -6173,9 +6451,9 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
          IF ( (IW>0) .AND. (WALL(IW)%BOUNDARY_TYPE==INTERPOLATED_BOUNDARY) ) VELC = UVW_SAVE(IW)
          ! Add to divergence integral of surrounding cut-cell:
          IF(LHFACE == LOW_IND) THEN ! Face on low side of cell
-            U_DOT_DEL_RHO_Z(I,J,K+FCELL  )=U_DOT_DEL_RHO_Z(I,J,K+FCELL  )-SGNFCT*(FN_ZZ-RHO_Z_PV( 0))*VELC*AF ! -ve dot
+            U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL  )=U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL  )-SGNFCT*(FN_ZZ-RHO_Z_PV( 0))*VELC*AF ! -ve dot
          ELSE ! Face on high side of cell
-            U_DOT_DEL_RHO_Z(I,J,K+FCELL-1)=U_DOT_DEL_RHO_Z(I,J,K+FCELL-1)+SGNFCT*(FN_ZZ-RHO_Z_PV(-1))*VELC*AF ! +ve dot
+            U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL-1)=U_DOT_DEL_RHO_Z_VOL(I,J,K+FCELL-1)+SGNFCT*(FN_ZZ-RHO_Z_PV(-1))*VELC*AF ! +ve dot
          ENDIF
       END SELECT
    ENDIF
@@ -6230,8 +6508,8 @@ DO IFACE=1,MESHES(NM)%IBM_NREGFACE_Z(X1AXIS)
    FN_H_S = (AM_P1*RHO_H_S_PV(-1)+AP_P1*RHO_H_S_PV(0)) ! bar{rho*hs}
    ! Add: -(bar{rho*hs} u dot n - (rho*hs) u dot n) to corresponding cell DP:
    AF = DY(J)*DZ(K)
-   DP(I+FCELL-1,J,K) = DP(I+FCELL-1,J,K) + (-1._EB)*(FN_H_S-RHO_H_S_PV(-1))*VELC*AF ! +ve dot
-   DP(I+FCELL  ,J,K) = DP(I+FCELL  ,J,K) - (-1._EB)*(FN_H_S-RHO_H_S_PV( 0))*VELC*AF ! -ve dot
+   DPVOL(I+FCELL-1,J,K) = DPVOL(I+FCELL-1,J,K) + (-1._EB)*(FN_H_S-RHO_H_S_PV(-1))*VELC*AF ! +ve dot
+   DPVOL(I+FCELL  ,J,K) = DPVOL(I+FCELL  ,J,K) - (-1._EB)*(FN_H_S-RHO_H_S_PV( 0))*VELC*AF ! -ve dot
 ENDDO
 
 ! JAXIS faces:
@@ -6262,8 +6540,8 @@ DO IFACE=1,MESHES(NM)%IBM_NREGFACE_Z(X1AXIS)
    FN_H_S = (AM_P1*RHO_H_S_PV(-1)+AP_P1*RHO_H_S_PV(0)) ! bar{rho*hs}
    ! Add: -(bar{rho*hs} u dot n - (rho*hs) u dot n) to corresponding cell DP:
    AF = DX(I)*DZ(K)
-   DP(I,J+FCELL-1,K) = DP(I,J+FCELL-1,K) + (-1._EB)*(FN_H_S-RHO_H_S_PV(-1))*VELC*AF ! +ve dot
-   DP(I,J+FCELL  ,K) = DP(I,J+FCELL  ,K) - (-1._EB)*(FN_H_S-RHO_H_S_PV( 0))*VELC*AF ! -ve dot
+   DPVOL(I,J+FCELL-1,K) = DPVOL(I,J+FCELL-1,K) + (-1._EB)*(FN_H_S-RHO_H_S_PV(-1))*VELC*AF ! +ve dot
+   DPVOL(I,J+FCELL  ,K) = DPVOL(I,J+FCELL  ,K) - (-1._EB)*(FN_H_S-RHO_H_S_PV( 0))*VELC*AF ! -ve dot
 ENDDO
 
 ! KAXIS faces:
@@ -6294,8 +6572,8 @@ DO IFACE=1,MESHES(NM)%IBM_NREGFACE_Z(X1AXIS)
    FN_H_S = (AM_P1*RHO_H_S_PV(-1)+AP_P1*RHO_H_S_PV(0)) ! bar{rho*hs}
    ! Add: -(bar{rho*hs} u dot n - (rho*hs) u dot n) to corresponding cell DP:
    AF = DX(I)*DY(J)
-   DP(I,J,K+FCELL-1) = DP(I,J,K+FCELL-1) + (-1._EB)*(FN_H_S-RHO_H_S_PV(-1))*VELC*AF ! +ve dot
-   DP(I,J,K+FCELL  ) = DP(I,J,K+FCELL  ) - (-1._EB)*(FN_H_S-RHO_H_S_PV( 0))*VELC*AF ! -ve dot
+   DPVOL(I,J,K+FCELL-1) = DPVOL(I,J,K+FCELL-1) + (-1._EB)*(FN_H_S-RHO_H_S_PV(-1))*VELC*AF ! +ve dot
+   DPVOL(I,J,K+FCELL  ) = DPVOL(I,J,K+FCELL  ) - (-1._EB)*(FN_H_S-RHO_H_S_PV( 0))*VELC*AF ! -ve dot
 ENDDO
 
 
@@ -6343,16 +6621,12 @@ DO IFACE=1,MESHES(NM)%IBM_NRCFACE_Z
             FCT = -REAL(2*ISIDE+1,EB) ! Factor to set +ve or -ve sign of dot with normal outside.
             SELECT CASE(IBM_RCFACE_Z(IFACE)%CELL_LIST(1,ISIDE+2))
             CASE(IBM_FTYPE_RGGAS) ! Regular cell
-               DP(I+FCELL+ISIDE,J,K)=DP(I+FCELL+ISIDE,J,K)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF !+ve/-ve dot
+               DPVOL(I+FCELL+ISIDE,J,K)=DPVOL(I+FCELL+ISIDE,J,K)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF !+ve/-ve dot
             CASE(IBM_FTYPE_CFGAS) ! Cut-cell
                ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
                IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE ! Cut-cell is guard-cell cc.
                JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-               IF (PREDICTOR) THEN
-                  CUT_CELL(ICC)%DS(JCC)=CUT_CELL(ICC)%DS(JCC)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
-               ELSE
-                  CUT_CELL(ICC)%D(JCC) =CUT_CELL(ICC)%D(JCC) +FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
-               ENDIF
+               CUT_CELL(ICC)%DVOL(JCC)=CUT_CELL(ICC)%DVOL(JCC)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
             END SELECT
          ENDDO
 
@@ -6389,16 +6663,12 @@ DO IFACE=1,MESHES(NM)%IBM_NRCFACE_Z
             FCT = -REAL(2*ISIDE+1,EB) ! Factor to set +ve or -ve sign of dot with normal outside.
             SELECT CASE(IBM_RCFACE_Z(IFACE)%CELL_LIST(1,ISIDE+2))
             CASE(IBM_FTYPE_RGGAS) ! Regular cell
-               DP(I,J+FCELL+ISIDE,K)=DP(I,J+FCELL+ISIDE,K)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF !+ve/-ve dot
+               DPVOL(I,J+FCELL+ISIDE,K)=DPVOL(I,J+FCELL+ISIDE,K)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF !+ve/-ve dot
             CASE(IBM_FTYPE_CFGAS) ! Cut-cell
                ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
                IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE ! Cut-cell is guard-cell cc.
                JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-               IF (PREDICTOR) THEN
-                  CUT_CELL(ICC)%DS(JCC)=CUT_CELL(ICC)%DS(JCC)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
-               ELSE
-                  CUT_CELL(ICC)%D(JCC) =CUT_CELL(ICC)%D(JCC) +FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
-               ENDIF
+               CUT_CELL(ICC)%DVOL(JCC)=CUT_CELL(ICC)%DVOL(JCC)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
             END SELECT
          ENDDO
 
@@ -6436,16 +6706,12 @@ DO IFACE=1,MESHES(NM)%IBM_NRCFACE_Z
             FCT = -REAL(2*ISIDE+1,EB) ! Factor to set +ve or -ve sign of dot with normal outside.
             SELECT CASE(IBM_RCFACE_Z(IFACE)%CELL_LIST(1,ISIDE+2))
             CASE(IBM_FTYPE_RGGAS) ! Regular cell
-               DP(I,J,K+FCELL+ISIDE)=DP(I,J,K+FCELL+ISIDE)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF !+ve/-ve dot
+               DPVOL(I,J,K+FCELL+ISIDE)=DPVOL(I,J,K+FCELL+ISIDE)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF !+ve/-ve dot
             CASE(IBM_FTYPE_CFGAS) ! Cut-cell
                ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
                IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE ! Cut-cell is guard-cell cc.
                JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-               IF (PREDICTOR) THEN
-                  CUT_CELL(ICC)%DS(JCC)=CUT_CELL(ICC)%DS(JCC)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
-               ELSE
-                  CUT_CELL(ICC)%D(JCC) =CUT_CELL(ICC)%D(JCC) +FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
-               ENDIF
+               CUT_CELL(ICC)%DVOL(JCC)=CUT_CELL(ICC)%DVOL(JCC)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
             END SELECT
          ENDDO
 
@@ -6497,11 +6763,7 @@ DO ICF = 1,MESHES(NM)%N_CUTFACE_MESH
             ICC = CUT_FACE(ICF)%CELL_LIST(2,ISIDE+2,IFACE)
             IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE ! Cut-cell is guard-cell cc.
             JCC = CUT_FACE(ICF)%CELL_LIST(3,ISIDE+2,IFACE)
-            IF (PREDICTOR) THEN
-               CUT_CELL(ICC)%DS(JCC)=CUT_CELL(ICC)%DS(JCC)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
-            ELSE
-               CUT_CELL(ICC)%D(JCC) =CUT_CELL(ICC)%D(JCC) +FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
-            ENDIF
+            CUT_CELL(ICC)%DVOL(JCC)=CUT_CELL(ICC)%DVOL(JCC)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
          END SELECT
       ENDDO
    ENDDO ! IFACE
@@ -6531,29 +6793,19 @@ DO IFACE=1,MESHES(NM)%IBM_NBBREGFACE_Z(X1AXIS)
    RHO_H_S_PV(ISIDE) = RHOPV(ISIDE)*H_S
    ! Calculate the sensible enthalpy at the boundary. If the boundary is solid
    ! and the gas is flowing out, use the gas temperature for the calculation.
-   IF (PREDICTOR) THEN
-      VELC2 = WC%ONE_D%U_NORMAL_S
-   ELSE
-      VELC2 = WC%ONE_D%U_NORMAL
-   ENDIF
-   IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY .AND. VELC2>0._EB) THEN
-      TMP_F_GAS = WC%ONE_D%TMP_G
-   ELSE
-      TMP_F_GAS = WC%ONE_D%TMP_F
+   VELC      = UU(I,J,K)
+   VELC2     = PRFCT*WC%ONE_D%U_NORMAL + (1._EB-PRFCT)*WC%ONE_D%U_NORMAL_S
+   TMP_F_GAS = WC%ONE_D%TMP_F
+   IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY) THEN
+      VELC = -SIGN(1._EB,REAL(IOR,EB))*VELC2
+      IF (VELC2>0._EB) TMP_F_GAS = WC%ONE_D%TMP_G
    ENDIF
    ZZ_GET(1:N_TRACKED_SPECIES) = WC%ONE_D%ZZ_F(1:N_TRACKED_SPECIES)
    CALL GET_SENSIBLE_ENTHALPY(ZZ_GET,H_S,TMP_F_GAS)
-   SELECT CASE(WC%BOUNDARY_TYPE)
-      CASE DEFAULT
-         VELC = UU(I,J,K)
-      CASE(SOLID_BOUNDARY)
-         IF (PREDICTOR) VELC = -SIGN(1._EB,REAL(IOR,EB))*WC%ONE_D%U_NORMAL_S
-         IF (CORRECTOR) VELC = -SIGN(1._EB,REAL(IOR,EB))*WC%ONE_D%U_NORMAL
-   END SELECT
    FN_H_S = WC%ONE_D%RHO_F*H_S ! bar{rho*hs}
    ! Add: -(bar{rho*hs} u dot n - (rho*hs) u dot n) to corresponding cell DP:
    AF = DY(J)*DZ(K)
-   DP(I+FCELL+ISIDE,J,K) = DP(I+FCELL+ISIDE,J,K) + SIGN(1._EB,REAL(IOR,EB))*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
+   DPVOL(I+FCELL+ISIDE,J,K) = DPVOL(I+FCELL+ISIDE,J,K) + SIGN(1._EB,REAL(IOR,EB))*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
 ENDDO
 
 ! JAXIS faces:
@@ -6579,29 +6831,19 @@ DO IFACE=1,MESHES(NM)%IBM_NBBREGFACE_Z(X1AXIS)
    RHO_H_S_PV(ISIDE) = RHOPV(ISIDE)*H_S
    ! Calculate the sensible enthalpy at the boundary. If the boundary is solid
    ! and the gas is flowing out, use the gas temperature for the calculation.
-   IF (PREDICTOR) THEN
-      VELC2 = WC%ONE_D%U_NORMAL_S
-   ELSE
-      VELC2 = WC%ONE_D%U_NORMAL
-   ENDIF
-   IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY .AND. VELC2>0._EB) THEN
-      TMP_F_GAS = WC%ONE_D%TMP_G
-   ELSE
-      TMP_F_GAS = WC%ONE_D%TMP_F
+   VELC      = VV(I,J,K)
+   VELC2     = PRFCT*WC%ONE_D%U_NORMAL + (1._EB-PRFCT)*WC%ONE_D%U_NORMAL_S
+   TMP_F_GAS = WC%ONE_D%TMP_F
+   IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY) THEN
+      VELC = -SIGN(1._EB,REAL(IOR,EB))*VELC2
+      IF (VELC2>0._EB) TMP_F_GAS = WC%ONE_D%TMP_G
    ENDIF
    ZZ_GET(1:N_TRACKED_SPECIES) = WC%ONE_D%ZZ_F(1:N_TRACKED_SPECIES)
    CALL GET_SENSIBLE_ENTHALPY(ZZ_GET,H_S,TMP_F_GAS)
-   SELECT CASE(WC%BOUNDARY_TYPE)
-      CASE DEFAULT
-         VELC = VV(I,J,K)
-      CASE(SOLID_BOUNDARY)
-         IF (PREDICTOR) VELC = -SIGN(1._EB,REAL(IOR,EB))*WC%ONE_D%U_NORMAL_S
-         IF (CORRECTOR) VELC = -SIGN(1._EB,REAL(IOR,EB))*WC%ONE_D%U_NORMAL
-   END SELECT
    FN_H_S = WC%ONE_D%RHO_F*H_S ! bar{rho*hs}
    ! Add: -(bar{rho*hs} u dot n - (rho*hs) u dot n) to corresponding cell DP:
    AF = DX(I)*DZ(K)
-   DP(I,J+FCELL+ISIDE,K) = DP(I,J+FCELL+ISIDE,K) + SIGN(1._EB,REAL(IOR,EB))*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
+   DPVOL(I,J+FCELL+ISIDE,K) = DPVOL(I,J+FCELL+ISIDE,K) + SIGN(1._EB,REAL(IOR,EB))*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
 ENDDO
 
 ! KAXIS faces:
@@ -6627,29 +6869,19 @@ DO IFACE=1,MESHES(NM)%IBM_NBBREGFACE_Z(X1AXIS)
    RHO_H_S_PV(ISIDE) = RHOPV(ISIDE)*H_S
    ! Calculate the sensible enthalpy at the boundary. If the boundary is solid
    ! and the gas is flowing out, use the gas temperature for the calculation.
-   IF (PREDICTOR) THEN
-      VELC2 = WC%ONE_D%U_NORMAL_S
-   ELSE
-      VELC2 = WC%ONE_D%U_NORMAL
-   ENDIF
-   IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY .AND. VELC2>0._EB) THEN
-      TMP_F_GAS = WC%ONE_D%TMP_G
-   ELSE
-      TMP_F_GAS = WC%ONE_D%TMP_F
+   VELC      = WW(I,J,K)
+   VELC2     = PRFCT*WC%ONE_D%U_NORMAL + (1._EB-PRFCT)*WC%ONE_D%U_NORMAL_S
+   TMP_F_GAS = WC%ONE_D%TMP_F
+   IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY) THEN
+      VELC = -SIGN(1._EB,REAL(IOR,EB))*VELC2
+      IF (VELC2>0._EB) TMP_F_GAS = WC%ONE_D%TMP_G
    ENDIF
    ZZ_GET(1:N_TRACKED_SPECIES) = WC%ONE_D%ZZ_F(1:N_TRACKED_SPECIES)
    CALL GET_SENSIBLE_ENTHALPY(ZZ_GET,H_S,TMP_F_GAS)
-   SELECT CASE(WC%BOUNDARY_TYPE)
-      CASE DEFAULT
-         VELC = WW(I,J,K)
-      CASE(SOLID_BOUNDARY)
-         IF (PREDICTOR) VELC = -SIGN(1._EB,REAL(IOR,EB))*WC%ONE_D%U_NORMAL_S
-         IF (CORRECTOR) VELC = -SIGN(1._EB,REAL(IOR,EB))*WC%ONE_D%U_NORMAL
-   END SELECT
    FN_H_S = WC%ONE_D%RHO_F*H_S ! bar{rho*hs}
    ! Add: -(bar{rho*hs} u dot n - (rho*hs) u dot n) to corresponding cell DP:
    AF = DX(I)*DY(J)
-   DP(I,J,K+FCELL+ISIDE) = DP(I,J,K+FCELL+ISIDE) + SIGN(1._EB,REAL(IOR,EB))*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
+   DPVOL(I,J,K+FCELL+ISIDE) = DPVOL(I,J,K+FCELL+ISIDE) + SIGN(1._EB,REAL(IOR,EB))*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
 ENDDO
 
 ! Regular Faces connecting gasphase cells to cut-cells:
@@ -6725,45 +6957,30 @@ DO IFACE=1,MESHES(NM)%IBM_NBBRCFACE_Z
    ! Flux limited face value bar{rho*hs}_F
    ! Calculate the sensible enthalpy at the boundary. If the boundary is solid
    ! and the gas is flowing out, use the gas temperature for the calculation.
-   IF (PREDICTOR) THEN
-      VELC2 = WC%ONE_D%U_NORMAL_S
-   ELSE
-      VELC2 = WC%ONE_D%U_NORMAL
-   ENDIF
-   IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY .AND. VELC2>0._EB) THEN
-      TMP_F_GAS = WC%ONE_D%TMP_G
-   ELSE
-      TMP_F_GAS = WC%ONE_D%TMP_F
+   VELC2     = PRFCT*WC%ONE_D%U_NORMAL + (1._EB-PRFCT)*WC%ONE_D%U_NORMAL_S
+   TMP_F_GAS = WC%ONE_D%TMP_F
+   IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY) THEN
+      VELC = -SIGN(1._EB,REAL(IOR,EB))*VELC2
+      IF (VELC2>0._EB) TMP_F_GAS = WC%ONE_D%TMP_G
    ENDIF
    ZZ_GET(1:N_TRACKED_SPECIES) = WC%ONE_D%ZZ_F(1:N_TRACKED_SPECIES)
    CALL GET_SENSIBLE_ENTHALPY(ZZ_GET,H_S,TMP_F_GAS)
-   SELECT CASE(WC%BOUNDARY_TYPE)
-      CASE DEFAULT
-         ! Already filled in previous X1AXIS select case.
-      CASE(SOLID_BOUNDARY)
-         IF (PREDICTOR) VELC = -SIGN(1._EB,REAL(IOR,EB))*WC%ONE_D%U_NORMAL_S
-         IF (CORRECTOR) VELC = -SIGN(1._EB,REAL(IOR,EB))*WC%ONE_D%U_NORMAL
-   END SELECT
    FN_H_S = WC%ONE_D%RHO_F*H_S ! bar{rho*hs}
    ! Finally add to Div:
    SELECT CASE(IBM_RCFACE_Z(IFACE)%CELL_LIST(1,ISIDE+2))
    CASE(IBM_FTYPE_RGGAS) ! Regular cell
       SELECT CASE(X1AXIS)
       CASE(IAXIS)
-         DP(I+FCELL+ISIDE,J,K)=DP(I+FCELL+ISIDE,J,K)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF !+ve/-ve dot
+         DPVOL(I+FCELL+ISIDE,J,K)=DPVOL(I+FCELL+ISIDE,J,K)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF !+ve/-ve dot
       CASE(JAXIS)
-         DP(I,J+FCELL+ISIDE,K)=DP(I,J+FCELL+ISIDE,K)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
+         DPVOL(I,J+FCELL+ISIDE,K)=DPVOL(I,J+FCELL+ISIDE,K)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
       CASE(KAXIS)
-         DP(I,J,K+FCELL+ISIDE)=DP(I,J,K+FCELL+ISIDE)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
+         DPVOL(I,J,K+FCELL+ISIDE)=DPVOL(I,J,K+FCELL+ISIDE)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
       END SELECT
    CASE(IBM_FTYPE_CFGAS) ! Cut-cell
       ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
       JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-      IF (PREDICTOR) THEN
-         CUT_CELL(ICC)%DS(JCC)=CUT_CELL(ICC)%DS(JCC)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
-      ELSE
-         CUT_CELL(ICC)%D(JCC) =CUT_CELL(ICC)%D(JCC) +FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
-      ENDIF
+      CUT_CELL(ICC)%DVOL(JCC)=CUT_CELL(ICC)%DVOL(JCC)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
    END SELECT
 ENDDO
 
@@ -6778,16 +6995,9 @@ DO ICF = 1,MESHES(NM)%N_BBCUTFACE_MESH
    IOR = WC%ONE_D%IOR
    ! Flux limited face value bar{rho*hs}_F, the ONE_D variable values fo TMP, RHOP, ZZ and RSUM have been averaged to
    ! the cartesian cell location in CCREGION_DENSITY:
-   IF (PREDICTOR) THEN
-      VELC2 = WC%ONE_D%U_NORMAL_S
-   ELSE
-      VELC2 = WC%ONE_D%U_NORMAL
-   ENDIF
-   IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY .AND. VELC2>0._EB) THEN
-      TMP_F_GAS = WC%ONE_D%TMP_G
-   ELSE
-      TMP_F_GAS = WC%ONE_D%TMP_F
-   ENDIF
+   VELC2     = PRFCT*WC%ONE_D%U_NORMAL + (1._EB-PRFCT)*WC%ONE_D%U_NORMAL_S
+   TMP_F_GAS = WC%ONE_D%TMP_F
+   IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY .AND. VELC2>0._EB) TMP_F_GAS = WC%ONE_D%TMP_G
    ZZ_GET(1:N_TRACKED_SPECIES) = WC%ONE_D%ZZ_F(1:N_TRACKED_SPECIES)
    CALL GET_SENSIBLE_ENTHALPY(ZZ_GET,H_S,TMP_F_GAS)
    FN_H_S = WC%ONE_D%RHO_F*H_S ! bar{rho*hs}
@@ -6809,11 +7019,7 @@ DO ICF = 1,MESHES(NM)%N_BBCUTFACE_MESH
                                  (1._EB-PRFCT)*CUT_CELL(ICC)%ZZS(1:N_TRACKED_SPECIES,JCC)
          CALL GET_SENSIBLE_ENTHALPY(ZZ_GET,H_S,TMPV(ISIDE))
          RHO_H_S_PV(ISIDE) = RHOPV(ISIDE)*H_S
-         IF (PREDICTOR) THEN
-            CUT_CELL(ICC)%DS(JCC)=CUT_CELL(ICC)%DS(JCC)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF ! +ve or -ve dot
-         ELSE
-            CUT_CELL(ICC)%D(JCC) =CUT_CELL(ICC)%D(JCC) +FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF ! +ve or -ve dot
-         ENDIF
+         CUT_CELL(ICC)%DVOL(JCC)=CUT_CELL(ICC)%DVOL(JCC)+FCT*(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF ! +ve or -ve dot
       END SELECT
    ENDDO ! IFACE
 ENDDO ! ICF
@@ -6827,19 +7033,10 @@ CFACE_LOOP : DO ICFA=1,N_CFACE_CELLS
    IND2=CFA%CUT_FACE_IND2
    ICC = CUT_FACE(IND1)%CELL_LIST(2,LOW_IND,IND2)
    JCC = CUT_FACE(IND1)%CELL_LIST(3,LOW_IND,IND2)
-
    AF = CFA%AREA
-
-   IF (PREDICTOR) THEN
-      VELC = CFA%ONE_D%U_NORMAL_S
-   ELSE
-      VELC = CFA%ONE_D%U_NORMAL
-   ENDIF
-   IF (VELC>0._EB) THEN
-      TMP_F_GAS = CUT_CELL(ICC)%TMP(JCC)
-   ELSE
-      TMP_F_GAS = CFA%ONE_D%TMP_F
-   ENDIF
+   VELC      = PRFCT*CFA%ONE_D%U_NORMAL + (1._EB-PRFCT)*CFA%ONE_D%U_NORMAL_S
+   TMP_F_GAS = CFA%ONE_D%TMP_F
+   IF (VELC>0._EB) TMP_F_GAS = CFA%ONE_D%TMP_G ! CUT_CELL(ICC)%TMP(JCC)
    ZZ_GET(1:N_TRACKED_SPECIES) = CFA%ONE_D%ZZ_F(1:N_TRACKED_SPECIES)
    CALL GET_SENSIBLE_ENTHALPY(ZZ_GET,H_S,TMP_F_GAS)
    FN_H_S = CFA%ONE_D%RHO_F*H_S ! bar{rho*hs}
@@ -6850,14 +7047,8 @@ CFACE_LOOP : DO ICFA=1,N_CFACE_CELLS
                           (1._EB-PRFCT)*CUT_CELL(ICC)%ZZS(1:N_TRACKED_SPECIES,JCC)
    CALL GET_SENSIBLE_ENTHALPY(ZZ_GET,H_S,TMPV(ISIDE))
    RHO_H_S_PV(ISIDE) = RHOPV(ISIDE)*H_S
-
-   IF (PREDICTOR) THEN
-      CUT_CELL(ICC)%DS(JCC)=CUT_CELL(ICC)%DS(JCC)+(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF ! +ve or -ve dot
-   ELSE
-      CUT_CELL(ICC)%D(JCC) =CUT_CELL(ICC)%D(JCC) +(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF ! +ve or -ve dot
-   ENDIF
+   CUT_CELL(ICC)%DVOL(JCC)=CUT_CELL(ICC)%DVOL(JCC)+(-1._EB)*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF ! +ve or -ve dot
 ENDDO CFACE_LOOP
-
 
 
 ! EXIM faces:
@@ -6907,7 +7098,7 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
           RHO_H_S_PV(ISIDE) = RHOPV(ISIDE)*H_S
           ! Add: -(bar{rho*hs} u dot n - (rho*hs) u dot n) to corresponding cell DP:
           AF = DY(J)*DZ(K)
-          DP(I+FCELL+ISIDE,J,K) = DP(I+FCELL+ISIDE,J,K) + SIGN(1._EB,REAL(IOR,EB))*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
+          DPVOL(I+FCELL+ISIDE,J,K) = DPVOL(I+FCELL+ISIDE,J,K) + SIGN(1._EB,REAL(IOR,EB))*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
        CASE(JAXIS)
           RHOPV(ISIDE)      = RHOP(I,J+FCELL+ISIDE,K)
           TMPV(ISIDE)       =  TMP(I,J+FCELL+ISIDE,K)
@@ -6917,7 +7108,7 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
           RHO_H_S_PV(ISIDE) = RHOPV(ISIDE)*H_S
           ! Add: -(bar{rho*hs} u dot n - (rho*hs) u dot n) to corresponding cell DP:
           AF = DX(I)*DZ(K)
-          DP(I,J+FCELL+ISIDE,K) = DP(I,J+FCELL+ISIDE,K) + SIGN(1._EB,REAL(IOR,EB))*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
+          DPVOL(I,J+FCELL+ISIDE,K) = DPVOL(I,J+FCELL+ISIDE,K) + SIGN(1._EB,REAL(IOR,EB))*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
        CASE(KAXIS)
           RHOPV(ISIDE)      = RHOP(I,J,K+FCELL+ISIDE)
           TMPV(ISIDE)       =  TMP(I,J,K+FCELL+ISIDE)
@@ -6927,7 +7118,7 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
           RHO_H_S_PV(ISIDE) = RHOPV(ISIDE)*H_S
           ! Add: -(bar{rho*hs} u dot n - (rho*hs) u dot n) to corresponding cell DP:
           AF = DX(I)*DY(J)
-          DP(I,J,K+FCELL+ISIDE) = DP(I,J,K+FCELL+ISIDE) + SIGN(1._EB,REAL(IOR,EB))*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
+          DPVOL(I,J,K+FCELL+ISIDE) = DPVOL(I,J,K+FCELL+ISIDE) + SIGN(1._EB,REAL(IOR,EB))*(FN_H_S-RHO_H_S_PV(ISIDE))*VELC*AF
        END SELECT
 
    ELSE ! Regular cases and internal EXIM faces:
@@ -6947,9 +7138,9 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
          ENDIF
          ! Add to divergence integral of surrounding cut-cell:
          IF(LHFACE == LOW_IND) THEN ! Face on low side of cell
-            DP(I+FCELL  ,J,K) = DP(I+FCELL  ,J,K) - (-1._EB)*(FN_H_S-RHO_H_S_PV( 0))*VELC * AF ! -ve dot
+            DPVOL(I+FCELL  ,J,K) = DPVOL(I+FCELL  ,J,K) - (-1._EB)*(FN_H_S-RHO_H_S_PV( 0))*VELC * AF ! -ve dot
          ELSE ! Face on high side of cell
-            DP(I+FCELL-1,J,K) = DP(I+FCELL-1,J,K) + (-1._EB)*(FN_H_S-RHO_H_S_PV(-1))*VELC * AF ! +ve dot
+            DPVOL(I+FCELL-1,J,K) = DPVOL(I+FCELL-1,J,K) + (-1._EB)*(FN_H_S-RHO_H_S_PV(-1))*VELC * AF ! +ve dot
          ENDIF
       CASE(JAXIS)
          RHOPV(-1:0)  = RHOP(I,J+FCELL-1:J+FCELL,K)
@@ -6965,9 +7156,9 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
          ENDIF
          ! Add to divergence integral of surrounding cut-cell:
          IF(LHFACE == LOW_IND) THEN ! Face on low side of cell
-            DP(I,J+FCELL  ,K) = DP(I,J+FCELL  ,K) - (-1._EB)*(FN_H_S-RHO_H_S_PV( 0))*VELC * AF ! -ve dot
+            DPVOL(I,J+FCELL  ,K) = DPVOL(I,J+FCELL  ,K) - (-1._EB)*(FN_H_S-RHO_H_S_PV( 0))*VELC * AF ! -ve dot
          ELSE ! Face on high side of cell
-            DP(I,J+FCELL-1,K) = DP(I,J+FCELL-1,K) + (-1._EB)*(FN_H_S-RHO_H_S_PV(-1))*VELC * AF ! +ve dot
+            DPVOL(I,J+FCELL-1,K) = DPVOL(I,J+FCELL-1,K) + (-1._EB)*(FN_H_S-RHO_H_S_PV(-1))*VELC * AF ! +ve dot
          ENDIF
       CASE(KAXIS)
          RHOPV(-1:0)  = RHOP(I,J,K+FCELL-1:K+FCELL)
@@ -6983,9 +7174,9 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
          ENDIF
          ! Add to divergence integral of surrounding cut-cell:
          IF(LHFACE == LOW_IND) THEN ! Face on low side of cell
-            DP(I,J,K+FCELL  ) = DP(I,J,K+FCELL  ) - (-1._EB)*(FN_H_S-RHO_H_S_PV( 0))*VELC * AF ! -ve dot
+            DPVOL(I,J,K+FCELL  ) = DPVOL(I,J,K+FCELL  ) - (-1._EB)*(FN_H_S-RHO_H_S_PV( 0))*VELC * AF ! -ve dot
          ELSE ! Face on high side of cell
-            DP(I,J,K+FCELL-1) = DP(I,J,K+FCELL-1) + (-1._EB)*(FN_H_S-RHO_H_S_PV(-1))*VELC * AF ! +ve dot
+            DPVOL(I,J,K+FCELL-1) = DPVOL(I,J,K+FCELL-1) + (-1._EB)*(FN_H_S-RHO_H_S_PV(-1))*VELC * AF ! +ve dot
          ENDIF
       END SELECT
    ENDIF
@@ -7026,16 +7217,12 @@ SPECIES_LOOP1: DO N=1,N_TOTAL_SCALARS
 
       ! Add H_RHO_D_DZDN dot n to corresponding cell DP:
       AF = DY(J)*DZ(K)
-      DP(I+FCELL-1,J,K) = DP(I+FCELL-1,J,K) + &
-                          IBM_REGFACE_IAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! +ve dot
-      DP(I+FCELL  ,J,K) = DP(I+FCELL  ,J,K) - &
-                          IBM_REGFACE_IAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! -ve dot
+      DPVOL(I+FCELL-1,J,K) = DPVOL(I+FCELL-1,J,K) + IBM_REGFACE_IAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! +ve dot
+      DPVOL(I+FCELL  ,J,K) = DPVOL(I+FCELL  ,J,K) - IBM_REGFACE_IAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! -ve dot
 
       ! Add to int(DEL_RHO_D_DEL_Z)dv in FV form:
-      DEL_RHO_D_DEL_Z(I+FCELL-1,J,K,N) = DEL_RHO_D_DEL_Z(I+FCELL-1,J,K,N) + &
-                          IBM_REGFACE_IAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND) * AF ! +ve dot
-      DEL_RHO_D_DEL_Z(I+FCELL  ,J,K,N) = DEL_RHO_D_DEL_Z(I+FCELL  ,J,K,N) - &
-                          IBM_REGFACE_IAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND) * AF ! -ve dot
+      DEL_RHO_D_DEL_Z(I+FCELL-1,J,K,N)=DEL_RHO_D_DEL_Z(I+FCELL-1,J,K,N)+IBM_REGFACE_IAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND)*AF !+ dot
+      DEL_RHO_D_DEL_Z(I+FCELL  ,J,K,N)=DEL_RHO_D_DEL_Z(I+FCELL  ,J,K,N)-IBM_REGFACE_IAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND)*AF !- dot
 
    ENDDO
 
@@ -7058,16 +7245,12 @@ SPECIES_LOOP1: DO N=1,N_TOTAL_SCALARS
 
       ! Add H_RHO_D_DZDN dot n to corresponding cell DP:
       AF = DX(I)*DZ(K)
-      DP(I,J+FCELL-1,K) = DP(I,J+FCELL-1,K) + &
-                          IBM_REGFACE_JAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! +ve dot
-      DP(I,J+FCELL  ,K) = DP(I,J+FCELL  ,K) - &
-                          IBM_REGFACE_JAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! -ve dot
+      DPVOL(I,J+FCELL-1,K) = DPVOL(I,J+FCELL-1,K) + IBM_REGFACE_JAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! +ve dot
+      DPVOL(I,J+FCELL  ,K) = DPVOL(I,J+FCELL  ,K) - IBM_REGFACE_JAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! -ve dot
 
       ! Add to int(DEL_RHO_D_DEL_Z)dv in FV form:
-      DEL_RHO_D_DEL_Z(I,J+FCELL-1,K,N) = DEL_RHO_D_DEL_Z(I,J+FCELL-1,K,N) + &
-                          IBM_REGFACE_JAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND) * AF ! +ve dot
-      DEL_RHO_D_DEL_Z(I,J+FCELL  ,K,N) = DEL_RHO_D_DEL_Z(I,J+FCELL  ,K,N) - &
-                          IBM_REGFACE_JAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND) * AF ! -ve dot
+      DEL_RHO_D_DEL_Z(I,J+FCELL-1,K,N)=DEL_RHO_D_DEL_Z(I,J+FCELL-1,K,N)+IBM_REGFACE_JAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND)*AF !+ dot
+      DEL_RHO_D_DEL_Z(I,J+FCELL  ,K,N)=DEL_RHO_D_DEL_Z(I,J+FCELL  ,K,N)-IBM_REGFACE_JAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND)*AF !- dot
 
    ENDDO
 
@@ -7089,16 +7272,12 @@ SPECIES_LOOP1: DO N=1,N_TOTAL_SCALARS
 
       ! Add H_RHO_D_DZDN dot n to corresponding cell DP:
       AF = DX(I)*DY(J)
-      DP(I,J,K+FCELL-1) = DP(I,J,K+FCELL-1) + &
-                          IBM_REGFACE_KAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! +ve dot
-      DP(I,J,K+FCELL  ) = DP(I,J,K+FCELL  ) - &
-                          IBM_REGFACE_KAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! -ve dot
+      DPVOL(I,J,K+FCELL-1) = DPVOL(I,J,K+FCELL-1) + IBM_REGFACE_KAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! +ve dot
+      DPVOL(I,J,K+FCELL  ) = DPVOL(I,J,K+FCELL  ) - IBM_REGFACE_KAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! -ve dot
 
       ! Add to int(DEL_RHO_D_DEL_Z)dv in FV form:
-      DEL_RHO_D_DEL_Z(I,J,K+FCELL-1,N) = DEL_RHO_D_DEL_Z(I,J,K+FCELL-1,N) + &
-                          IBM_REGFACE_KAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND) * AF ! +ve dot
-      DEL_RHO_D_DEL_Z(I,J,K+FCELL  ,N) = DEL_RHO_D_DEL_Z(I,J,K+FCELL  ,N) - &
-                          IBM_REGFACE_KAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND) * AF ! -ve dot
+      DEL_RHO_D_DEL_Z(I,J,K+FCELL-1,N)=DEL_RHO_D_DEL_Z(I,J,K+FCELL-1,N)+IBM_REGFACE_KAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND)*AF !+ dot
+      DEL_RHO_D_DEL_Z(I,J,K+FCELL  ,N)=DEL_RHO_D_DEL_Z(I,J,K+FCELL  ,N)-IBM_REGFACE_KAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND)*AF !- dot
 
    ENDDO
 
@@ -7128,26 +7307,18 @@ DO IFACE=1,MESHES(NM)%IBM_NRCFACE_Z
          FCT = -REAL(2*ISIDE+1,EB) ! Factor to set +ve or -ve sign of dot with normal outside.
          SELECT CASE(IBM_RCFACE_Z(IFACE)%CELL_LIST(1,ISIDE+2))
          CASE(IBM_FTYPE_RGGAS) ! Regular cell
-         DP(I+FCELL+ISIDE,J,K)=DP(I+FCELL+ISIDE,J,K)+FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF
+         DPVOL(I+FCELL+ISIDE,J,K)=DPVOL(I+FCELL+ISIDE,J,K)+FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF
          ! +ve or -ve dot
          DO N=1,N_TOTAL_SCALARS
-            DEL_RHO_D_DEL_Z(I+FCELL+ISIDE,J,K,N) = DEL_RHO_D_DEL_Z(I+FCELL+ISIDE,J,K,N) + &
-                                                   FCT*IBM_RCFACE_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND) * AF
+         DEL_RHO_D_DEL_Z(I+FCELL+ISIDE,J,K,N)=DEL_RHO_D_DEL_Z(I+FCELL+ISIDE,J,K,N)+FCT*IBM_RCFACE_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND)*AF
          ENDDO
          CASE(IBM_FTYPE_CFGAS) ! Cut-cell
          ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
          IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE
          JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-         IF (PREDICTOR) THEN
-            CUT_CELL(ICC)%DS(JCC) = &
-            CUT_CELL(ICC)%DS(JCC) + FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve or -ve dot
-         ELSE
-            CUT_CELL(ICC)%D(JCC) = &
-            CUT_CELL(ICC)%D(JCC) + FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve or -ve dot
-         ENDIF
-         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC) = &
-         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC) + &
-         FCT*IBM_RCFACE_Z(IFACE)%RHO_D_DZDN(1:N_TOTAL_SCALARS,JFLX_IND) * AF
+         CUT_CELL(ICC)%DVOL(JCC)=CUT_CELL(ICC)%DVOL(JCC)+FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF !+/- dot
+         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:N_TOTAL_SCALARS,JCC)= &
+         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:N_TOTAL_SCALARS,JCC)+FCT*IBM_RCFACE_Z(IFACE)%RHO_D_DZDN(1:N_TOTAL_SCALARS,JFLX_IND)*AF
          END SELECT
       ENDDO
    CASE(JAXIS)
@@ -7163,26 +7334,18 @@ DO IFACE=1,MESHES(NM)%IBM_NRCFACE_Z
          FCT = -REAL(2*ISIDE+1,EB) ! Factor to set +ve or -ve sign of dot with normal outside.
          SELECT CASE(IBM_RCFACE_Z(IFACE)%CELL_LIST(1,ISIDE+2))
          CASE(IBM_FTYPE_RGGAS) ! Regular cell
-         DP(I,J+FCELL+ISIDE,K)=DP(I,J+FCELL+ISIDE,K)+FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF
+         DPVOL(I,J+FCELL+ISIDE,K)=DPVOL(I,J+FCELL+ISIDE,K)+FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF
          ! +ve or -ve dot
          DO N=1,N_TOTAL_SCALARS
-            DEL_RHO_D_DEL_Z(I,J+FCELL+ISIDE,K,N) = DEL_RHO_D_DEL_Z(I,J+FCELL+ISIDE,K,N) + &
-                                                   FCT*IBM_RCFACE_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND) * AF
+         DEL_RHO_D_DEL_Z(I,J+FCELL+ISIDE,K,N)=DEL_RHO_D_DEL_Z(I,J+FCELL+ISIDE,K,N)+FCT*IBM_RCFACE_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND)*AF
          ENDDO
          CASE(IBM_FTYPE_CFGAS) ! Cut-cell
          ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
          IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE
          JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-         IF (PREDICTOR) THEN
-            CUT_CELL(ICC)%DS(JCC) = &
-            CUT_CELL(ICC)%DS(JCC) + FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve or -ve dot
-         ELSE
-            CUT_CELL(ICC)%D(JCC) = &
-            CUT_CELL(ICC)%D(JCC) + FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve or -ve dot
-         ENDIF
-         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC) = &
-         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC) + &
-         FCT*IBM_RCFACE_Z(IFACE)%RHO_D_DZDN(1:N_TOTAL_SCALARS,JFLX_IND) * AF
+         CUT_CELL(ICC)%DVOL(JCC)=CUT_CELL(ICC)%DVOL(JCC)+FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF !+/- dot
+         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:N_TOTAL_SCALARS,JCC)= &
+         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:N_TOTAL_SCALARS,JCC)+FCT*IBM_RCFACE_Z(IFACE)%RHO_D_DZDN(1:N_TOTAL_SCALARS,JFLX_IND)*AF
          END SELECT
       ENDDO
    CASE(KAXIS)
@@ -7198,26 +7361,18 @@ DO IFACE=1,MESHES(NM)%IBM_NRCFACE_Z
          FCT = -REAL(2*ISIDE+1,EB) ! Factor to set +ve or -ve sign of dot with normal outside.
          SELECT CASE(IBM_RCFACE_Z(IFACE)%CELL_LIST(1,ISIDE+2))
          CASE(IBM_FTYPE_RGGAS) ! Regular cell
-         DP(I,J,K+FCELL+ISIDE)=DP(I,J,K+FCELL+ISIDE)+FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF
+         DPVOL(I,J,K+FCELL+ISIDE)=DPVOL(I,J,K+FCELL+ISIDE)+FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF
          ! +ve or -ve dot
          DO N=1,N_TOTAL_SCALARS
-            DEL_RHO_D_DEL_Z(I,J,K+FCELL+ISIDE,N) = DEL_RHO_D_DEL_Z(I,J,K+FCELL+ISIDE,N) + &
-                                                   FCT*IBM_RCFACE_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND) * AF
+         DEL_RHO_D_DEL_Z(I,J,K+FCELL+ISIDE,N)=DEL_RHO_D_DEL_Z(I,J,K+FCELL+ISIDE,N)+FCT*IBM_RCFACE_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND)*AF
          ENDDO
          CASE(IBM_FTYPE_CFGAS) ! Cut-cell
          ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
          IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE
          JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-         IF (PREDICTOR) THEN
-            CUT_CELL(ICC)%DS(JCC) = &
-            CUT_CELL(ICC)%DS(JCC) + FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve or -ve dot
-         ELSE
-            CUT_CELL(ICC)%D(JCC) = &
-            CUT_CELL(ICC)%D(JCC) + FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve or -ve dot
-         ENDIF
-         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC) = &
-         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC) + &
-         FCT*IBM_RCFACE_Z(IFACE)%RHO_D_DZDN(1:N_TOTAL_SCALARS,JFLX_IND)* AF
+         CUT_CELL(ICC)%DVOL(JCC)=CUT_CELL(ICC)%DVOL(JCC)+FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF !+/- dot
+         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:N_TOTAL_SCALARS,JCC)= &
+         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:N_TOTAL_SCALARS,JCC)+FCT*IBM_RCFACE_Z(IFACE)%RHO_D_DZDN(1:N_TOTAL_SCALARS,JFLX_IND)*AF
          END SELECT
       ENDDO
    END SELECT
@@ -7250,16 +7405,9 @@ DO ICF = 1,MESHES(NM)%N_CUTFACE_MESH
          ICC = CUT_FACE(ICF)%CELL_LIST(2,ISIDE+2,IFACE)
          IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE
          JCC = CUT_FACE(ICF)%CELL_LIST(3,ISIDE+2,IFACE)
-         IF (PREDICTOR) THEN
-            CUT_CELL(ICC)%DS(JCC) = &
-            CUT_CELL(ICC)%DS(JCC) + FCT*SUM(CUT_FACE(ICF)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS,IFACE)) * AF ! +ve or -ve dot
-         ELSE
-            CUT_CELL(ICC)%D(JCC) = &
-            CUT_CELL(ICC)%D(JCC) + FCT*SUM(CUT_FACE(ICF)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS,IFACE)) * AF ! +ve or -ve dot
-         ENDIF
-         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC) = &
-         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC) + &
-         FCT*CUT_FACE(ICF)%RHO_D_DZDN(1:N_TOTAL_SCALARS,JFLX_IND,IFACE)* AF
+         CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC)+FCT*SUM(CUT_FACE(ICF)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS,IFACE))*AF !+/- dot
+         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:N_TOTAL_SCALARS,JCC)= &
+         CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:N_TOTAL_SCALARS,JCC)+FCT*CUT_FACE(ICF)%RHO_D_DZDN(1:N_TOTAL_SCALARS,JFLX_IND,IFACE)*AF
          END SELECT
       ENDDO
    ENDDO ! IFACE
@@ -7274,32 +7422,17 @@ CFACE_LOOP : DO ICF=1,N_CFACE_CELLS
    IND1 = CFA%CUT_FACE_IND1;                         IND2 = CFA%CUT_FACE_IND2
    ICC  = CUT_FACE(IND1)%CELL_LIST(2,LOW_IND,IND2);  JCC  = CUT_FACE(IND1)%CELL_LIST(3,LOW_IND,IND2)
    ! H_RHO_D_DZDN
-   IF (PREDICTOR) THEN
-      UN_P = CFA%ONE_D%U_NORMAL_S
-   ELSE
-      UN_P = CFA%ONE_D%U_NORMAL
-   ENDIF
-   IF (UN_P>0._EB) THEN
-      TMP_G = CFA%ONE_D%TMP_G ! CUT_CELL(ICC)%TMP(JCC)
-   ELSE
-      TMP_G = CFA%ONE_D%TMP_F
-   ENDIF
+   UN_P =  PRFCT*CFA%ONE_D%U_NORMAL + (1._EB-PRFCT)*CFA%ONE_D%U_NORMAL_S
+   TMP_G = CFA%ONE_D%TMP_F
+   IF (UN_P>0._EB) TMP_G = CFA%ONE_D%TMP_G
    DO N=1,N_TOTAL_SCALARS
       CALL GET_SENSIBLE_ENTHALPY_Z(N,TMP_G,H_S)
       CUT_FACE(IND1)%H_RHO_D_DZDN(N,IND2) = H_S*CFA%ONE_D%RHO_D_DZDN_F(N)
    ENDDO
    ! Add diffusive mass flux enthalpy contribution to cut-cell thermo divg:
-   IF (PREDICTOR) THEN
-      CUT_CELL(ICC)%DS(JCC) = &
-      CUT_CELL(ICC)%DS(JCC) - SUM(CUT_FACE(IND1)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS,IND2))*CFA%AREA
-   ELSE
-      CUT_CELL(ICC)%D(JCC) = &
-      CUT_CELL(ICC)%D(JCC) - SUM(CUT_FACE(IND1)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS,IND2))*CFA%AREA
-   ENDIF
-   CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC) = &
-   CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC) - &
-   CFA%ONE_D%RHO_D_DZDN_F(1:N_TOTAL_SCALARS)*CFA%AREA
-
+   CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC) - SUM(CUT_FACE(IND1)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS,IND2))*CFA%AREA
+   CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:N_TOTAL_SCALARS,JCC) = &
+   CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:N_TOTAL_SCALARS,JCC) - CFA%ONE_D%RHO_D_DZDN_F(1:N_TOTAL_SCALARS)*CFA%AREA
 ENDDO CFACE_LOOP
 
 ! Domain boundaries:
@@ -7316,17 +7449,10 @@ SPECIES_LOOP2: DO N=1,N_TOTAL_SCALARS
       J  = IBM_REGFACE_IAXIS_Z(IFACE)%IJK(JAXIS)
       K  = IBM_REGFACE_IAXIS_Z(IFACE)%IJK(KAXIS)
       WC => WALL(IW)
+      UN_P = PRFCT*WC%ONE_D%U_NORMAL + (1._EB-PRFCT)*WC%ONE_D%U_NORMAL_S
+      TMP_G = WC%ONE_D%TMP_F
+      IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY .AND. UN_P>0._EB) TMP_G = WC%ONE_D%TMP_G
       ! H_RHO_D_DZDN
-      IF (PREDICTOR) THEN
-         UN_P = WC%ONE_D%U_NORMAL_S
-      ELSE
-         UN_P = WC%ONE_D%U_NORMAL
-      ENDIF
-      IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY .AND. UN_P>0._EB) THEN
-         TMP_G = WC%ONE_D%TMP_G
-      ELSE
-         TMP_G = WC%ONE_D%TMP_F
-      ENDIF
       CALL GET_SENSIBLE_ENTHALPY_Z(N,TMP_G,H_S)
       IBM_REGFACE_IAXIS_Z(IFACE)%H_RHO_D_DZDN(N) = H_S*IBM_REGFACE_IAXIS_Z(IFACE)%RHO_D_DZDN(N,DIFFHFLX_IND)
 
@@ -7334,12 +7460,12 @@ SPECIES_LOOP2: DO N=1,N_TOTAL_SCALARS
       AF = DY(J)*DZ(K)
       SELECT CASE(WC%ONE_D%IOR)
       CASE(-IAXIS) ! Low side cell.
-      DP(I+FCELL-1,J,K) = DP(I+FCELL-1,J,K) + IBM_REGFACE_IAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! +ve dot
+      DPVOL(I+FCELL-1,J,K) = DPVOL(I+FCELL-1,J,K) + IBM_REGFACE_IAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! +ve dot
       ! Add to int(DEL_RHO_D_DEL_Z)dv in FV form:
       DEL_RHO_D_DEL_Z(I+FCELL-1,J,K,N) = DEL_RHO_D_DEL_Z(I+FCELL-1,J,K,N) + &
                                          IBM_REGFACE_IAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND) * AF ! +ve dot
       CASE( IAXIS) ! High side cell.
-      DP(I+FCELL  ,J,K) = DP(I+FCELL  ,J,K) - IBM_REGFACE_IAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! -ve dot
+      DPVOL(I+FCELL  ,J,K) = DPVOL(I+FCELL  ,J,K) - IBM_REGFACE_IAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! -ve dot
       DEL_RHO_D_DEL_Z(I+FCELL  ,J,K,N) = DEL_RHO_D_DEL_Z(I+FCELL  ,J,K,N) - &
                                          IBM_REGFACE_IAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND) * AF ! -ve dot
       END SELECT
@@ -7356,17 +7482,10 @@ SPECIES_LOOP2: DO N=1,N_TOTAL_SCALARS
       J  = IBM_REGFACE_JAXIS_Z(IFACE)%IJK(JAXIS)
       K  = IBM_REGFACE_JAXIS_Z(IFACE)%IJK(KAXIS)
       WC => WALL(IW)
+      UN_P = PRFCT*WC%ONE_D%U_NORMAL + (1._EB-PRFCT)*WC%ONE_D%U_NORMAL_S
+      TMP_G = WC%ONE_D%TMP_F
+      IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY .AND. UN_P>0._EB) TMP_G = WC%ONE_D%TMP_G
       ! H_RHO_D_DZDN
-      IF (PREDICTOR) THEN
-         UN_P = WC%ONE_D%U_NORMAL_S
-      ELSE
-         UN_P = WC%ONE_D%U_NORMAL
-      ENDIF
-      IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY .AND. UN_P>0._EB) THEN
-         TMP_G = WC%ONE_D%TMP_G
-      ELSE
-         TMP_G = WC%ONE_D%TMP_F
-      ENDIF
       CALL GET_SENSIBLE_ENTHALPY_Z(N,TMP_G,H_S)
       IBM_REGFACE_JAXIS_Z(IFACE)%H_RHO_D_DZDN(N) = H_S*IBM_REGFACE_JAXIS_Z(IFACE)%RHO_D_DZDN(N,DIFFHFLX_IND)
 
@@ -7374,12 +7493,12 @@ SPECIES_LOOP2: DO N=1,N_TOTAL_SCALARS
       AF = DX(I)*DZ(K)
       SELECT CASE(WC%ONE_D%IOR)
       CASE(-JAXIS) ! Low side cell.
-      DP(I,J+FCELL-1,K) = DP(I,J+FCELL-1,K) + IBM_REGFACE_JAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! +ve dot
+      DPVOL(I,J+FCELL-1,K) = DPVOL(I,J+FCELL-1,K) + IBM_REGFACE_JAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! +ve dot
                           ! Add to int(DEL_RHO_D_DEL_Z)dv in FV form:
       DEL_RHO_D_DEL_Z(I,J+FCELL-1,K,N) = DEL_RHO_D_DEL_Z(I,J+FCELL-1,K,N) + &
                                          IBM_REGFACE_JAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND) * AF ! +ve dot
       CASE( JAXIS) ! High side cell.
-      DP(I,J+FCELL  ,K) = DP(I,J+FCELL  ,K) - IBM_REGFACE_JAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! -ve dot
+      DPVOL(I,J+FCELL  ,K) = DPVOL(I,J+FCELL  ,K) - IBM_REGFACE_JAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! -ve dot
       DEL_RHO_D_DEL_Z(I,J+FCELL  ,K,N) = DEL_RHO_D_DEL_Z(I,J+FCELL  ,K,N) - &
                                          IBM_REGFACE_JAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND) * AF ! -ve dot
       END SELECT
@@ -7396,17 +7515,10 @@ SPECIES_LOOP2: DO N=1,N_TOTAL_SCALARS
       J  = IBM_REGFACE_KAXIS_Z(IFACE)%IJK(JAXIS)
       K  = IBM_REGFACE_KAXIS_Z(IFACE)%IJK(KAXIS)
       WC => WALL(IW)
+      UN_P = PRFCT*WC%ONE_D%U_NORMAL + (1._EB-PRFCT)*WC%ONE_D%U_NORMAL_S
+      TMP_G = WC%ONE_D%TMP_F
+      IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY .AND. UN_P>0._EB) TMP_G = WC%ONE_D%TMP_G
       ! H_RHO_D_DZDN
-      IF (PREDICTOR) THEN
-         UN_P = WC%ONE_D%U_NORMAL_S
-      ELSE
-         UN_P = WC%ONE_D%U_NORMAL
-      ENDIF
-      IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY .AND. UN_P>0._EB) THEN
-         TMP_G = WC%ONE_D%TMP_G
-      ELSE
-         TMP_G = WC%ONE_D%TMP_F
-      ENDIF
       CALL GET_SENSIBLE_ENTHALPY_Z(N,TMP_G,H_S)
       IBM_REGFACE_KAXIS_Z(IFACE)%H_RHO_D_DZDN(N) = H_S*IBM_REGFACE_KAXIS_Z(IFACE)%RHO_D_DZDN(N,DIFFHFLX_IND)
 
@@ -7414,12 +7526,12 @@ SPECIES_LOOP2: DO N=1,N_TOTAL_SCALARS
       AF = DX(I)*DY(J)
       SELECT CASE(WC%ONE_D%IOR)
       CASE(-KAXIS) ! Low side cell.
-      DP(I,J,K+FCELL-1) = DP(I,J,K+FCELL-1) + IBM_REGFACE_KAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! +ve dot
+      DPVOL(I,J,K+FCELL-1) = DPVOL(I,J,K+FCELL-1) + IBM_REGFACE_KAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! +ve dot
       ! Add to int(DEL_RHO_D_DEL_Z)dv in FV form:
       DEL_RHO_D_DEL_Z(I,J,K+FCELL-1,N) = DEL_RHO_D_DEL_Z(I,J,K+FCELL-1,N) + &
                                          IBM_REGFACE_KAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND) * AF ! +ve dot
       CASE( KAXIS) ! High side cell.
-      DP(I,J,K+FCELL  ) = DP(I,J,K+FCELL  ) - IBM_REGFACE_KAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! -ve dot
+      DPVOL(I,J,K+FCELL  ) = DPVOL(I,J,K+FCELL  ) - IBM_REGFACE_KAXIS_Z(IFACE)%H_RHO_D_DZDN(N) * AF ! -ve dot
       DEL_RHO_D_DEL_Z(I,J,K+FCELL  ,N) = DEL_RHO_D_DEL_Z(I,J,K+FCELL  ,N) - &
                                          IBM_REGFACE_KAXIS_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND) * AF ! -ve dot
       END SELECT
@@ -7463,23 +7575,16 @@ DO IFACE=1,MESHES(NM)%IBM_NBBRCFACE_Z
    FCT = -REAL(2*ISIDE+1,EB) ! Factor to set +ve or -ve sign of dot with normal outside.
    SELECT CASE(IBM_RCFACE_Z(IFACE)%CELL_LIST(1,ISIDE+2))
    CASE(IBM_FTYPE_RGGAS) ! Regular cell
-   DP(IIG,JJG,KKG)=DP(IIG,JJG,KKG)+FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve or -ve dot
+   DPVOL(IIG,JJG,KKG)=DPVOL(IIG,JJG,KKG)+FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve or -ve dot
    DO N=1,N_TOTAL_SCALARS
       DEL_RHO_D_DEL_Z(IIG,JJG,KKG,N)=DEL_RHO_D_DEL_Z(IIG,JJG,KKG,N)+FCT*IBM_RCFACE_Z(IFACE)%RHO_D_DZDN(N,JFLX_IND)*AF
    ENDDO
    CASE(IBM_FTYPE_CFGAS) ! Cut-cell
    ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
    JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-   IF (PREDICTOR) THEN
-      CUT_CELL(ICC)%DS(JCC) = &
-      CUT_CELL(ICC)%DS(JCC) + FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve or -ve dot
-   ELSE
-      CUT_CELL(ICC)%D(JCC) = &
-      CUT_CELL(ICC)%D(JCC) + FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve or -ve dot
-   ENDIF
-   CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC) = &
-   CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC) + &
-   FCT*IBM_RCFACE_Z(IFACE)%RHO_D_DZDN(1:N_TOTAL_SCALARS,JFLX_IND) * AF
+   CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC) + FCT*SUM(IBM_RCFACE_Z(IFACE)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF !+/- dot
+   CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:N_TOTAL_SCALARS,JCC) = &
+   CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:N_TOTAL_SCALARS,JCC) + FCT*IBM_RCFACE_Z(IFACE)%RHO_D_DZDN(1:N_TOTAL_SCALARS,JFLX_IND) * AF
    END SELECT
 ENDDO
 
@@ -7514,16 +7619,9 @@ DO ICF = 1,MESHES(NM)%N_BBCUTFACE_MESH
       CASE(IBM_FTYPE_CFGAS) ! Cut-cell -> use Temperature value from CUT_CELL data struct:
       ICC = CUT_FACE(ICF)%CELL_LIST(2,ISIDE+2,IFACE)
       JCC = CUT_FACE(ICF)%CELL_LIST(3,ISIDE+2,IFACE)
-      IF (PREDICTOR) THEN
-         CUT_CELL(ICC)%DS(JCC) = &
-         CUT_CELL(ICC)%DS(JCC) + FCT*SUM(CUT_FACE(ICF)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS,IFACE)) * AF ! +ve or -ve dot
-      ELSE
-         CUT_CELL(ICC)%D(JCC) = &
-         CUT_CELL(ICC)%D(JCC) + FCT*SUM(CUT_FACE(ICF)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS,IFACE)) * AF ! +ve or -ve dot
-      ENDIF
-      CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC) = &
-      CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:N_TOTAL_SCALARS,JCC) + &
-      FCT*CUT_FACE(ICF)%RHO_D_DZDN(1:N_TOTAL_SCALARS,JFLX_IND,IFACE)* AF
+      CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC) + FCT*SUM(CUT_FACE(ICF)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS,IFACE)) * AF !+/- dot
+      CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:N_TOTAL_SCALARS,JCC) = &
+      CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:N_TOTAL_SCALARS,JCC) + FCT*CUT_FACE(ICF)%RHO_D_DZDN(1:N_TOTAL_SCALARS,JFLX_IND,IFACE)*AF
       END SELECT
    ENDDO ! IFACE
 ENDDO ! ICF
@@ -7580,12 +7678,12 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
    CASE(IAXIS)
       ! Add H_RHO_D_DZDN dot n to corresponding cell DP:
       IF(LHFACE == LOW_IND) THEN ! Face on low side of cell
-         DP(I+FCELL  ,J,K) = DP(I+FCELL  ,J,K)-SUM(IBM_EXIM_FACE(IEXIM)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! -ve dot
+         DPVOL(I+FCELL  ,J,K) = DPVOL(I+FCELL  ,J,K)-SUM(IBM_EXIM_FACE(IEXIM)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! -ve dot
          DO N=1,N_TOTAL_SCALARS
             DEL_RHO_D_DEL_Z(I+FCELL  ,J,K,N)=DEL_RHO_D_DEL_Z(I+FCELL  ,J,K,N)-IBM_EXIM_FACE(IEXIM)%FLX(LOW_IND,N)*AF
          ENDDO
       ELSE ! Face on high side of cell
-         DP(I+FCELL-1,J,K) = DP(I+FCELL-1,J,K)+SUM(IBM_EXIM_FACE(IEXIM)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve dot
+         DPVOL(I+FCELL-1,J,K) = DPVOL(I+FCELL-1,J,K)+SUM(IBM_EXIM_FACE(IEXIM)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve dot
          DO N=1,N_TOTAL_SCALARS
             DEL_RHO_D_DEL_Z(I+FCELL-1,J,K,N)=DEL_RHO_D_DEL_Z(I+FCELL-1,J,K,N)+IBM_EXIM_FACE(IEXIM)%FLX(LOW_IND,N)*AF
          ENDDO
@@ -7593,12 +7691,12 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
    CASE(JAXIS)
       ! Add H_RHO_D_DZDN dot n to corresponding cell DP:
       IF(LHFACE == LOW_IND) THEN ! Face on low side of cell
-         DP(I,J+FCELL  ,K) = DP(I,J+FCELL  ,K)-SUM(IBM_EXIM_FACE(IEXIM)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! -ve dot
+         DPVOL(I,J+FCELL  ,K) = DPVOL(I,J+FCELL  ,K)-SUM(IBM_EXIM_FACE(IEXIM)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! -ve dot
          DO N=1,N_TOTAL_SCALARS
             DEL_RHO_D_DEL_Z(I,J+FCELL  ,K,N)=DEL_RHO_D_DEL_Z(I,J+FCELL  ,K,N)-IBM_EXIM_FACE(IEXIM)%FLX(LOW_IND,N)*AF
          ENDDO
       ELSE ! Face on high side of cell
-         DP(I,J+FCELL-1,K) = DP(I,J+FCELL-1,K)+SUM(IBM_EXIM_FACE(IEXIM)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve dot
+         DPVOL(I,J+FCELL-1,K) = DPVOL(I,J+FCELL-1,K)+SUM(IBM_EXIM_FACE(IEXIM)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve dot
          DO N=1,N_TOTAL_SCALARS
             DEL_RHO_D_DEL_Z(I,J+FCELL-1,K,N)=DEL_RHO_D_DEL_Z(I,J+FCELL-1,K,N)+IBM_EXIM_FACE(IEXIM)%FLX(LOW_IND,N)*AF
          ENDDO
@@ -7606,12 +7704,12 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
    CASE(KAXIS)
       ! Add H_RHO_D_DZDN dot n to corresponding cell DP:
       IF(LHFACE == LOW_IND) THEN ! Face on low side of cell
-         DP(I,J,K+FCELL  ) = DP(I,J,K+FCELL  )-SUM(IBM_EXIM_FACE(IEXIM)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! -ve dot
+         DPVOL(I,J,K+FCELL  ) = DPVOL(I,J,K+FCELL  )-SUM(IBM_EXIM_FACE(IEXIM)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! -ve dot
          DO N=1,N_TOTAL_SCALARS
             DEL_RHO_D_DEL_Z(I,J,K+FCELL  ,N)=DEL_RHO_D_DEL_Z(I,J,K+FCELL  ,N)-IBM_EXIM_FACE(IEXIM)%FLX(LOW_IND,N)*AF
          ENDDO
       ELSE ! Face on high side of cell
-         DP(I,J,K+FCELL-1) = DP(I,J,K+FCELL-1)+SUM(IBM_EXIM_FACE(IEXIM)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve dot
+         DPVOL(I,J,K+FCELL-1) = DPVOL(I,J,K+FCELL-1)+SUM(IBM_EXIM_FACE(IEXIM)%H_RHO_D_DZDN(1:N_TOTAL_SCALARS))*AF ! +ve dot
          DO N=1,N_TOTAL_SCALARS
             DEL_RHO_D_DEL_Z(I,J,K+FCELL-1,N)=DEL_RHO_D_DEL_Z(I,J,K+FCELL-1,N)+IBM_EXIM_FACE(IEXIM)%FLX(LOW_IND,N)*AF
          ENDDO
@@ -7653,8 +7751,8 @@ DO IFACE=1,MESHES(NM)%IBM_NREGFACE_Z(X1AXIS)
 
    ! Add K*DTDN dot n to corresponding cell DP:
    AF = DY(J)*DZ(K)
-   DP(I+FCELL-1,J,K) = DP(I+FCELL-1,J,K) + KPDTDN * AF ! +ve dot
-   DP(I+FCELL  ,J,K) = DP(I+FCELL  ,J,K) - KPDTDN * AF ! -ve dot
+   DPVOL(I+FCELL-1,J,K) = DPVOL(I+FCELL-1,J,K) + KPDTDN * AF ! +ve dot
+   DPVOL(I+FCELL  ,J,K) = DPVOL(I+FCELL  ,J,K) - KPDTDN * AF ! -ve dot
 ENDDO
 
 ! JAXIS faces:
@@ -7681,8 +7779,8 @@ DO IFACE=1,MESHES(NM)%IBM_NREGFACE_Z(X1AXIS)
 
    ! Add K*DTDN dot n to corresponding cell DP:
    AF = DX(I)*DZ(K)
-   DP(I,J+FCELL-1,K) = DP(I,J+FCELL-1,K) + KPDTDN * AF ! +ve dot
-   DP(I,J+FCELL  ,K) = DP(I,J+FCELL  ,K) - KPDTDN * AF ! -ve dot
+   DPVOL(I,J+FCELL-1,K) = DPVOL(I,J+FCELL-1,K) + KPDTDN * AF ! +ve dot
+   DPVOL(I,J+FCELL  ,K) = DPVOL(I,J+FCELL  ,K) - KPDTDN * AF ! -ve dot
 ENDDO
 
 ! KAXIS faces:
@@ -7709,8 +7807,8 @@ DO IFACE=1,MESHES(NM)%IBM_NREGFACE_Z(X1AXIS)
 
    ! Add K*DTDN dot n to corresponding cell DP:
    AF = DX(I)*DY(J)
-   DP(I,J,K+FCELL-1) = DP(I,J,K+FCELL-1) + KPDTDN * AF ! +ve dot
-   DP(I,J,K+FCELL  ) = DP(I,J,K+FCELL  ) - KPDTDN * AF ! -ve dot
+   DPVOL(I,J,K+FCELL-1) = DPVOL(I,J,K+FCELL-1) + KPDTDN * AF ! +ve dot
+   DPVOL(I,J,K+FCELL  ) = DPVOL(I,J,K+FCELL  ) - KPDTDN * AF ! -ve dot
 ENDDO
 
 
@@ -7763,18 +7861,12 @@ DO IFACE=1,MESHES(NM)%IBM_NRCFACE_Z
             FCT = -REAL(2*ISIDE+1,EB) ! Factor to set +ve or -ve sign of dot with normal outside.
             SELECT CASE(IBM_RCFACE_Z(IFACE)%CELL_LIST(1,ISIDE+2))
             CASE(IBM_FTYPE_RGGAS) ! Regular cell
-               DP(I+FCELL+ISIDE,J,K) = DP(I+FCELL+ISIDE,J,K) + FCT*KPDTDN * AF ! +ve or -ve dot
+               DPVOL(I+FCELL+ISIDE,J,K) = DPVOL(I+FCELL+ISIDE,J,K) + FCT*KPDTDN * AF ! +ve or -ve dot
             CASE(IBM_FTYPE_CFGAS) ! Cut-cell
                ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
                IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE ! Cut-cell is guard-cell cc.
                JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-               IF (PREDICTOR) THEN
-                  CUT_CELL(ICC)%DS(JCC) = &
-                  CUT_CELL(ICC)%DS(JCC) + FCT*KPDTDN * AF ! +ve or -ve dot
-               ELSE
-                  CUT_CELL(ICC)%D(JCC) = &
-                  CUT_CELL(ICC)%D(JCC) + FCT*KPDTDN * AF ! +ve or -ve dot
-               ENDIF
+               CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC) + FCT*KPDTDN * AF ! +ve or -ve dot
             END SELECT
          ENDDO
 
@@ -7814,18 +7906,12 @@ DO IFACE=1,MESHES(NM)%IBM_NRCFACE_Z
             FCT = -REAL(2*ISIDE+1,EB) ! Factor to set +ve or -ve sign of dot with normal outside.
             SELECT CASE(IBM_RCFACE_Z(IFACE)%CELL_LIST(1,ISIDE+2))
             CASE(IBM_FTYPE_RGGAS) ! Regular cell
-               DP(I,J+FCELL+ISIDE,K) = DP(I,J+FCELL+ISIDE,K) + FCT*KPDTDN * AF ! +ve or -ve dot
+               DPVOL(I,J+FCELL+ISIDE,K) = DPVOL(I,J+FCELL+ISIDE,K) + FCT*KPDTDN * AF ! +ve or -ve dot
             CASE(IBM_FTYPE_CFGAS) ! Cut-cell
                ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
                IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE ! Cut-cell is guard-cell cc.
                JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-               IF (PREDICTOR) THEN
-                  CUT_CELL(ICC)%DS(JCC) = &
-                  CUT_CELL(ICC)%DS(JCC) + FCT*KPDTDN * AF ! +ve or -ve dot
-               ELSE
-                  CUT_CELL(ICC)%D(JCC) = &
-                  CUT_CELL(ICC)%D(JCC) + FCT*KPDTDN * AF ! +ve or -ve dot
-               ENDIF
+               CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC) + FCT*KPDTDN * AF ! +ve or -ve dot
             END SELECT
          ENDDO
 
@@ -7865,18 +7951,12 @@ DO IFACE=1,MESHES(NM)%IBM_NRCFACE_Z
             FCT = -REAL(2*ISIDE+1,EB) ! Factor to set +ve or -ve sign of dot with normal outside.
             SELECT CASE(IBM_RCFACE_Z(IFACE)%CELL_LIST(1,ISIDE+2))
             CASE(IBM_FTYPE_RGGAS) ! Regular cell
-               DP(I,J,K+FCELL+ISIDE) = DP(I,J,K+FCELL+ISIDE) + FCT*KPDTDN * AF ! +ve or -ve dot
+               DPVOL(I,J,K+FCELL+ISIDE) = DPVOL(I,J,K+FCELL+ISIDE) + FCT*KPDTDN * AF ! +ve or -ve dot
             CASE(IBM_FTYPE_CFGAS) ! Cut-cell
                ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
                IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE ! Cut-cell is guard-cell cc.
                JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-               IF (PREDICTOR) THEN
-                  CUT_CELL(ICC)%DS(JCC) = &
-                  CUT_CELL(ICC)%DS(JCC) + FCT*KPDTDN * AF ! +ve or -ve dot
-               ELSE
-                  CUT_CELL(ICC)%D(JCC) = &
-                  CUT_CELL(ICC)%D(JCC) + FCT*KPDTDN * AF ! +ve or -ve dot
-               ENDIF
+               CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC) + FCT*KPDTDN * AF ! +ve or -ve dot
             END SELECT
          ENDDO
 
@@ -7938,13 +8018,7 @@ DO ICF = 1,MESHES(NM)%N_CUTFACE_MESH
             ICC = CUT_FACE(ICF)%CELL_LIST(2,ISIDE+2,IFACE)
             IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE ! Cut-cell is guard-cell cc.
             JCC = CUT_FACE(ICF)%CELL_LIST(3,ISIDE+2,IFACE)
-            IF (PREDICTOR) THEN
-               CUT_CELL(ICC)%DS(JCC) = &
-               CUT_CELL(ICC)%DS(JCC) + FCT*KPDTDN * AF ! +ve or -ve dot
-            ELSE
-               CUT_CELL(ICC)%D(JCC) = &
-               CUT_CELL(ICC)%D(JCC) + FCT*KPDTDN * AF ! +ve or -ve dot
-            ENDIF
+            CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC) + FCT*KPDTDN * AF ! +ve or -ve dot
          END SELECT
       ENDDO
    ENDDO ! IFACE
@@ -7964,7 +8038,7 @@ DO IFACE=1,MESHES(NM)%IBM_NBBREGFACE_Z(X1AXIS)
    KKG = WC%ONE_D%KKG
    AF  = DY(JJG)*DZ(KKG)
    ! Q_LEAK accounts for enthalpy moving through leakage paths
-   DP(IIG,JJG,KKG) = DP(IIG,JJG,KKG) - ( WC%ONE_D%Q_CON_F ) * AF  + WC%Q_LEAK * (DX(IIG)*DY(JJG)*DZ(KKG))
+   DPVOL(IIG,JJG,KKG) = DPVOL(IIG,JJG,KKG) - ( WC%ONE_D%Q_CON_F ) * AF  + WC%Q_LEAK * (DX(IIG)*DY(JJG)*DZ(KKG))
 ENDDO
 
 ! JAXIS faces:
@@ -7980,7 +8054,7 @@ DO IFACE=1,MESHES(NM)%IBM_NBBREGFACE_Z(X1AXIS)
    KKG = WC%ONE_D%KKG
    AF  = DX(IIG)*DZ(KKG)
    ! Q_LEAK accounts for enthalpy moving through leakage paths
-   DP(IIG,JJG,KKG) = DP(IIG,JJG,KKG) - ( WC%ONE_D%Q_CON_F ) * AF  + WC%Q_LEAK * (DX(IIG)*DY(JJG)*DZ(KKG))
+   DPVOL(IIG,JJG,KKG) = DPVOL(IIG,JJG,KKG) - ( WC%ONE_D%Q_CON_F ) * AF  + WC%Q_LEAK * (DX(IIG)*DY(JJG)*DZ(KKG))
 ENDDO
 
 ! KAXIS faces:
@@ -7996,7 +8070,7 @@ DO IFACE=1,MESHES(NM)%IBM_NBBREGFACE_Z(X1AXIS)
    KKG = WC%ONE_D%KKG
    AF  = DX(IIG)*DY(JJG)
    ! Q_LEAK accounts for enthalpy moving through leakage paths
-   DP(IIG,JJG,KKG) = DP(IIG,JJG,KKG) - ( WC%ONE_D%Q_CON_F ) * AF  + WC%Q_LEAK * (DX(IIG)*DY(JJG)*DZ(KKG))
+   DPVOL(IIG,JJG,KKG) = DPVOL(IIG,JJG,KKG) - ( WC%ONE_D%Q_CON_F ) * AF  + WC%Q_LEAK * (DX(IIG)*DY(JJG)*DZ(KKG))
 ENDDO
 
 ! Regular faces connecting gasphase - cut-cells:
@@ -8025,19 +8099,14 @@ DO IFACE=1,MESHES(NM)%IBM_NBBRCFACE_Z
    SELECT CASE(IBM_RCFACE_Z(IFACE)%CELL_LIST(1,ISIDE+2))
    CASE(IBM_FTYPE_RGGAS) ! Regular cell.
       ! Q_LEAK accounts for enthalpy moving through leakage paths
-      DP(IIG,JJG,KKG) = DP(IIG,JJG,KKG) - ( WC%ONE_D%Q_CON_F ) * AF  + WC%Q_LEAK * (DX(IIG)*DY(JJG)*DZ(KKG))
+      DPVOL(IIG,JJG,KKG) = DPVOL(IIG,JJG,KKG) - ( WC%ONE_D%Q_CON_F ) * AF  + WC%Q_LEAK * (DX(IIG)*DY(JJG)*DZ(KKG))
    CASE(IBM_FTYPE_CFGAS) ! Cut-cell -> use Temperature value from CUT_CELL data struct:
       ICC = IBM_RCFACE_Z(IFACE)%CELL_LIST(2,ISIDE+2)
       IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE ! Cut-cell is guard-cell cc.
       JCC = IBM_RCFACE_Z(IFACE)%CELL_LIST(3,ISIDE+2)
-      IF (PREDICTOR) THEN
-         CUT_CELL(ICC)%DS(JCC) = &
-         CUT_CELL(ICC)%DS(JCC) - ( WC%ONE_D%Q_CON_F ) * AF + WC%Q_LEAK * CUT_CELL(ICC)%VOLUME(JCC) ! Qconf +ve sign is
-                                                                                                 ! outwards of cut-cell.
-      ELSE
-         CUT_CELL(ICC)%D(JCC) = &
-         CUT_CELL(ICC)%D(JCC) - ( WC%ONE_D%Q_CON_F ) * AF  + WC%Q_LEAK * CUT_CELL(ICC)%VOLUME(JCC)
-      ENDIF
+      CUT_CELL(ICC)%DVOL(JCC) = &
+      CUT_CELL(ICC)%DVOL(JCC) - ( WC%ONE_D%Q_CON_F ) * AF + WC%Q_LEAK * CUT_CELL(ICC)%VOLUME(JCC) ! Qconf +ve sign is
+                                                                                                  ! outwards of cut-cell.
    END SELECT
 ENDDO
 
@@ -8097,11 +8166,7 @@ DO ICF = 1,MESHES(NM)%N_BBCUTFACE_MESH
                                     (1._EB-PRFCT)*CUT_CELL(ICC)%ZZS(1:N_TRACKED_SPECIES,JCC)
             CALL GET_CCREGION_CELL_CONDUCTIVITY(ZZ_GET,MUV(ISIDE),MU_DNSV(ISIDE),TMPV(ISIDE),KPV(ISIDE))
             KPDTDN = 0.5_EB*(KPV(-1)+KPV(0)) * (TMPV(0)-TMPV(-1)) * IDX
-            IF (PREDICTOR) THEN
-               CUT_CELL(ICC)%DS(JCC) = CUT_CELL(ICC)%DS(JCC) + FCT*KPDTDN * AF ! +ve or -ve dot
-            ELSE
-               CUT_CELL(ICC)%D(JCC)  = CUT_CELL(ICC)%D(JCC)  + FCT*KPDTDN * AF ! +ve or -ve dot
-            ENDIF
+            CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC) + FCT*KPDTDN * AF ! +ve or -ve dot
          END SELECT
       ENDDO
 
@@ -8114,14 +8179,9 @@ DO ICF = 1,MESHES(NM)%N_BBCUTFACE_MESH
             ICC = CUT_FACE(ICF)%CELL_LIST(2,ISIDE+2,IFACE)
             IF (ICC > MESHES(NM)%N_CUTCELL_MESH) CYCLE ! Cut-cell is guard-cell cc.
             JCC = CUT_FACE(ICF)%CELL_LIST(3,ISIDE+2,IFACE)
-            IF (PREDICTOR) THEN
-               CUT_CELL(ICC)%DS(JCC) = &
-               CUT_CELL(ICC)%DS(JCC) - ( WC%ONE_D%Q_CON_F ) * AF + WC%Q_LEAK * CUT_CELL(ICC)%VOLUME(JCC) ! Qconf +ve sign
-                                                                                              ! is outwards of cut-cell.
-            ELSE
-               CUT_CELL(ICC)%D(JCC) = &
-               CUT_CELL(ICC)%D(JCC) - ( WC%ONE_D%Q_CON_F ) * AF  + WC%Q_LEAK * CUT_CELL(ICC)%VOLUME(JCC)
-            ENDIF
+            CUT_CELL(ICC)%DVOL(JCC) = &
+            CUT_CELL(ICC)%DVOL(JCC) - ( WC%ONE_D%Q_CON_F ) * AF + WC%Q_LEAK * CUT_CELL(ICC)%VOLUME(JCC) ! Qconf +ve sign
+                                                                                                        ! is outwards of cut-cell.
          END SELECT
       ENDDO
    ENDIF GASBOUND_IF
@@ -8133,14 +8193,14 @@ IF (PREDICTOR) THEN
      CFA  => CFACE(ICF)
      IND1 = CFA%CUT_FACE_IND1;                         IND2 = CFA%CUT_FACE_IND2
      ICC  = CUT_FACE(IND1)%CELL_LIST(2,LOW_IND,IND2);  JCC  = CUT_FACE(IND1)%CELL_LIST(3,LOW_IND,IND2)
-     CUT_CELL(ICC)%DS(JCC)=CUT_CELL(ICC)%DS(JCC)-( CFA%ONE_D%Q_CON_F ) * CUT_FACE(IND1)%AREA(IND2) ! QCONF(+) into solid.
+     CUT_CELL(ICC)%DVOL(JCC)=CUT_CELL(ICC)%DVOL(JCC)-( CFA%ONE_D%Q_CON_F ) * CUT_FACE(IND1)%AREA(IND2) ! QCONF(+) into solid.
   ENDDO
 ELSE
   DO ICF=1,N_CFACE_CELLS
      CFA  => CFACE(ICF)
      IND1 = CFA%CUT_FACE_IND1;                         IND2 = CFA%CUT_FACE_IND2
      ICC  = CUT_FACE(IND1)%CELL_LIST(2,LOW_IND,IND2);  JCC  = CUT_FACE(IND1)%CELL_LIST(3,LOW_IND,IND2)
-     CUT_CELL(ICC)%D(JCC) = CUT_CELL(ICC)%D(JCC)-( CFA%ONE_D%Q_CON_F ) * CUT_FACE(IND1)%AREA(IND2) ! QCONF(+) into solid.
+     CUT_CELL(ICC)%DVOL(JCC) = CUT_CELL(ICC)%DVOL(JCC)-( CFA%ONE_D%Q_CON_F ) * CUT_FACE(IND1)%AREA(IND2) ! QCONF(+) into solid.
   ENDDO
 ENDIF
 
@@ -8164,7 +8224,7 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
      JJG = WC%ONE_D%JJG
      KKG = WC%ONE_D%KKG
      ! Q_LEAK accounts for enthalpy moving through leakage paths
-     DP(IIG,JJG,KKG) = DP(IIG,JJG,KKG) - ( WC%ONE_D%Q_CON_F ) * AF  + WC%Q_LEAK * (DX(IIG)*DY(JJG)*DZ(KKG))
+     DPVOL(IIG,JJG,KKG) = DPVOL(IIG,JJG,KKG) - ( WC%ONE_D%Q_CON_F ) * AF  + WC%Q_LEAK * (DX(IIG)*DY(JJG)*DZ(KKG))
   ELSE
 
      SELECT CASE(X1AXIS)
@@ -8180,9 +8240,9 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
         KPDTDN = 0.5_EB*(KPV(-1)+KPV(0)) * (TMPV(0)-TMPV(-1)) / DX(I)
         ! Add H_RHO_D_DZDN dot n to corresponding cell DP:
         IF(LHFACE == LOW_IND) THEN ! Face on low side of cell
-           DP(I+FCELL  ,J,K) = DP(I+FCELL  ,J,K) - KPDTDN * AF ! -ve dot
+           DPVOL(I+FCELL  ,J,K) = DPVOL(I+FCELL  ,J,K) - KPDTDN * AF ! -ve dot
         ELSE ! Face on high side of cell
-           DP(I+FCELL-1,J,K) = DP(I+FCELL-1,J,K) + KPDTDN * AF ! +ve dot
+           DPVOL(I+FCELL-1,J,K) = DPVOL(I+FCELL-1,J,K) + KPDTDN * AF ! +ve dot
         ENDIF
      CASE(JAXIS)
         ! K*DTDN:
@@ -8196,9 +8256,9 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
         KPDTDN = 0.5_EB*(KPV(-1)+KPV(0)) * (TMPV(0)-TMPV(-1)) / DY(J)
         ! Add H_RHO_D_DZDN dot n to corresponding cell DP:
         IF(LHFACE == LOW_IND) THEN ! Face on low side of cell
-           DP(I,J+FCELL  ,K) = DP(I,J+FCELL  ,K) - KPDTDN * AF ! -ve dot
+           DPVOL(I,J+FCELL  ,K) = DPVOL(I,J+FCELL  ,K) - KPDTDN * AF ! -ve dot
         ELSE ! Face on high side of cell
-           DP(I,J+FCELL-1,K) = DP(I,J+FCELL-1,K) + KPDTDN * AF ! +ve dot
+           DPVOL(I,J+FCELL-1,K) = DPVOL(I,J+FCELL-1,K) + KPDTDN * AF ! +ve dot
         ENDIF
      CASE(KAXIS)
         ! K*DTDN:
@@ -8212,9 +8272,9 @@ DO IEXIM=1,MESHES(NM)%IBM_NEXIMFACE_MESH
         KPDTDN = 0.5_EB*(KPV(-1)+KPV(0)) * (TMPV(0)-TMPV(-1)) / DZ(K)
         ! Add H_RHO_D_DZDN dot n to corresponding cell DP:
         IF(LHFACE == LOW_IND) THEN ! Face on low side of cell
-           DP(I,J,K+FCELL  ) = DP(I,J,K+FCELL  ) - KPDTDN * AF ! -ve dot
+           DPVOL(I,J,K+FCELL  ) = DPVOL(I,J,K+FCELL  ) - KPDTDN * AF ! -ve dot
         ELSE ! Face on high side of cell
-           DP(I,J,K+FCELL-1) = DP(I,J,K+FCELL-1) + KPDTDN * AF ! +ve dot
+           DPVOL(I,J,K+FCELL-1) = DPVOL(I,J,K+FCELL-1) + KPDTDN * AF ! +ve dot
         ENDIF
      END SELECT
 
@@ -8301,8 +8361,8 @@ REAL(EB), POINTER, DIMENSION(:,:,:,:) :: ZZP=>NULL()
 REAL(EB) :: D_Z_N(0:5000),CCM1,CCP1,IDX,DIFF_FACE,VELD,D_Z_TEMP(-1:0),MUV(-1:0),MU_DNSV(-1:0), &
             RHOPV(-1:0),RHOPVN(-1:0),TMPV(-1:0),ZZPV(-1:0),X1F,PRFCT
 REAL(EB), ALLOCATABLE, DIMENSION(:) :: ZZ_GET,RHO_D_DZDN_GET
-INTEGER :: N_LOOKUP
-INTEGER :: IW, IND1, IND2, N_ZZ_MAX
+INTEGER,  ALLOCATABLE, DIMENSION(:) :: N_ZZ_MAX_V
+INTEGER :: N_LOOKUP, IW
 REAL(EB) :: RHO_D_DZDN, ZZ_FACE, TMP_FACE
 TYPE(CFACE_TYPE), POINTER :: CFA=>NULL()
 
@@ -8318,6 +8378,12 @@ SELECT CASE(PREDICTOR)
 END SELECT
 
 ALLOCATE(ZZ_GET(N_TRACKED_SPECIES),RHO_D_DZDN_GET(N_TRACKED_SPECIES))
+
+! Define species index of max CFACE mass fraction.
+ALLOCATE(N_ZZ_MAX_V(N_CFACE_CELLS))
+DO ICF=1,N_CFACE_CELLS
+   N_ZZ_MAX_V(ICF)=MAXLOC(CFACE(ICF)%ONE_D%ZZ_F(1:N_TRACKED_SPECIES),1)
+ENDDO
 
 ! 1. Diffusive Heat flux = - Grad dot (h_s rho D Grad Z_n):
 ! In FV form: use faces to add corresponding face integral terms, for face k
@@ -8747,15 +8813,10 @@ DIFFUSIVE_FLUX_LOOP: DO N=1,N_TOTAL_SCALARS
    ISIDE=-1
    CFACE_LOOP : DO ICF=1,N_CFACE_CELLS
       CFA => CFACE(ICF)
-      IND1 = CFA%CUT_FACE_IND1;                         IND2 = CFA%CUT_FACE_IND2
-      ICC  = CUT_FACE(IND1)%CELL_LIST(2,LOW_IND,IND2);  JCC  = CUT_FACE(IND1)%CELL_LIST(3,LOW_IND,IND2)
-
       ! Use external Gas point data for ZZ_G estimation, consistent with CFA%ONE_D%RDN in the finite difference.
-      ZZPV(ISIDE) = CFA%ONE_D%ZZ_G(N)
       ! Flux fixing done here for CFACEs:
-      N_ZZ_MAX = MAXLOC(CFA%ONE_D%ZZ_F(1:N_TRACKED_SPECIES),1)
-      RHO_D_DZDN = 2._EB*CFA%ONE_D%RHO_D_F(N)*(ZZPV(ISIDE)-CFA%ONE_D%ZZ_F(N))*CFA%ONE_D%RDN
-      IF (N==N_ZZ_MAX) THEN
+      RHO_D_DZDN = 2._EB*CFA%ONE_D%RHO_D_F(N)*(CFA%ONE_D%ZZ_G(N)-CFA%ONE_D%ZZ_F(N))*CFA%ONE_D%RDN
+      IF (N==N_ZZ_MAX_V(ICF)) THEN
          ZZ_GET(1:N_TRACKED_SPECIES) = CFA%ONE_D%ZZ_G(1:N_TRACKED_SPECIES)
          RHO_D_DZDN_GET(1:N_TRACKED_SPECIES) = &
          2._EB*CFA%ONE_D%RHO_D_F(1:N_TRACKED_SPECIES)*( ZZ_GET(1:N_TRACKED_SPECIES) - &
@@ -8765,10 +8826,9 @@ DIFFUSIVE_FLUX_LOOP: DO N=1,N_TOTAL_SCALARS
       CFA%ONE_D%RHO_D_DZDN_F(N) = RHO_D_DZDN
 
       ! Now add variables from CFACES to INBOUNDARY cut-faces containers:
-      CUT_FACE(IND1)%RHO_D_DZDN(N,LOW_IND:HIGH_IND,IND2) = RHO_D_DZDN
-      CUT_FACE(IND1)%ZZ_FACE(N,IND2) = CFA%ONE_D%ZZ_F(N)
-      CUT_FACE(IND1)%TMP_FACE(IND2)  = CFA%ONE_D%TMP_F
-
+      CUT_FACE(CFA%CUT_FACE_IND1)%RHO_D_DZDN(N,LOW_IND:HIGH_IND,CFA%CUT_FACE_IND2) = RHO_D_DZDN
+      CUT_FACE(CFA%CUT_FACE_IND1)%ZZ_FACE(N,                    CFA%CUT_FACE_IND2) = CFA%ONE_D%ZZ_F(N)
+      CUT_FACE(CFA%CUT_FACE_IND1)%TMP_FACE(                     CFA%CUT_FACE_IND2) = CFA%ONE_D%TMP_F
    ENDDO CFACE_LOOP
 
    ! Mesh Boundaries:
@@ -8944,7 +9004,7 @@ DIFFUSIVE_FLUX_LOOP: DO N=1,N_TOTAL_SCALARS
 
 ENDDO DIFFUSIVE_FLUX_LOOP
 
-DEALLOCATE(ZZ_GET,RHO_D_DZDN_GET)
+DEALLOCATE(ZZ_GET,RHO_D_DZDN_GET,N_ZZ_MAX_V)
 
 RETURN
 
@@ -9304,7 +9364,9 @@ ELSE ! CORRECTOR
 ENDIF ! PREDICTOR
 
 T_USED(14) = T_USED(14) + CURRENT_TIME() - TNOW
-
+#ifdef TIME_CC_IBM
+T_CC_USED(CCREGION_DENSITY_TIME_INDEX) = T_CC_USED(CCREGION_DENSITY_TIME_INDEX) + CURRENT_TIME() - TNOW
+#endif
 RETURN
 END SUBROUTINE CCREGION_DENSITY
 
@@ -9931,7 +9993,7 @@ MESH_LOOP : DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
    DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
       DO JCC=1,CUT_CELL(ICC)%NCELL
          IROW = CUT_CELL(ICC)%UNKZ(JCC) - UNKZ_IND(NM_START)
-         F_Z(IROW) = F_Z(IROW) - CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(N,JCC)
+         F_Z(IROW) = F_Z(IROW) - CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(N,JCC)
       ENDDO
    ENDDO
 
@@ -13081,7 +13143,9 @@ ELSE
 ENDIF STORE_FLG_CND
 
 T_USED(14) = T_USED(14) + CURRENT_TIME() - TNOW
-
+#ifdef TIME_CC_IBM
+T_CC_USED(CCIBM_INTERP_FACE_VEL_TIME_INDEX) = T_CC_USED(CCIBM_INTERP_FACE_VEL_TIME_INDEX) + CURRENT_TIME() - TNOW
+#endif
 RETURN
 END SUBROUTINE CCIBM_INTERP_FACE_VEL
 
@@ -13287,6 +13351,9 @@ REAL(EB) :: U_VELO(MAX_DIM),U_SURF(MAX_DIM),U_RELA(MAX_DIM),&
             VAL_EP,DUMEB,COEF,TNOW,&
             U_NORM_EP,U_ORTH_EP,U_STRM_EP,U_NORM_FP,U_STRM_FP,DUSDN_FP
             ! DUUDT,DVVDT,DWWDT,GRAV_COMP,DCOEF(IAXIS:KAXIS),MTIME,DPDS,DIV_EP,TAU_SN_EP,TAU_W,GRAV_SS,RHS,DIV_FACE,
+#ifdef TIME_CC_IBM
+REAL(EB) :: TNOW2
+#endif
 
 ! INTEGER ::  L,M,N,R,DAXIS
 ! REAL(EB) :: MU_EP,DUDS,DVDS,DWDS,DUDN,DVDN,DWDN,DUVD(MAX_DIM),DUSTRMDS_EP,DUSTRMDS_FP
@@ -13307,6 +13374,9 @@ IF (PREDICTOR) THEN
 ELSE
    CALL MESH_CC_EXCHANGE( 4,.FALSE.) ! same for corrector.
 ENDIF
+#ifdef TIME_CC_IBM
+TNOW2= CURRENT_TIME()
+#endif
 
 ! Now apply mesh loop:
 MESH_LOOP : DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
@@ -13627,7 +13697,9 @@ MESH_LOOP : DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
 ENDDO MESH_LOOP
 
 T_USED(14) = T_USED(14) + CURRENT_TIME() - TNOW
-
+#ifdef TIME_CC_IBM
+T_CC_USED(CCIBM_VELOCITY_FLUX_TIME_INDEX) = T_CC_USED(CCIBM_VELOCITY_FLUX_TIME_INDEX) + CURRENT_TIME() - TNOW2
+#endif
 RETURN
 END SUBROUTINE CCIBM_VELOCITY_FLUX
 
@@ -13839,7 +13911,9 @@ CUTFACE_LOOP : DO ICF=1,MESHES(NM)%N_CUTFACE_MESH
 ENDDO CUTFACE_LOOP
 
 T_USED(14) = T_USED(14) + CURRENT_TIME() - TNOW
-
+#ifdef TIME_CC_IBM
+T_CC_USED(CCIBM_TARGET_VELOCITY_TIME_INDEX) = T_CC_USED(CCIBM_TARGET_VELOCITY_TIME_INDEX) + CURRENT_TIME() - TNOW
+#endif
 RETURN
 END SUBROUTINE CCIBM_TARGET_VELOCITY
 
@@ -14029,7 +14103,9 @@ EWC_LOOP : DO IW=1,N_EXTERNAL_WALL_CELLS
 ENDDO EWC_LOOP
 
 T_USED(14) = T_USED(14) + CURRENT_TIME() - TNOW
-
+#ifdef TIME_CC_IBM
+T_CC_USED(CCIBM_NO_FLUX_TIME_INDEX) = T_CC_USED(CCIBM_NO_FLUX_TIME_INDEX) + CURRENT_TIME() - TNOW
+#endif
 RETURN
 END SUBROUTINE CCIBM_NO_FLUX
 
@@ -14112,7 +14188,9 @@ DO K=0,KBAR
 ENDDO
 
 T_USED(14) = T_USED(14) + CURRENT_TIME() - TNOW
-
+#ifdef TIME_CC_IBM
+T_CC_USED(CCIBM_COMPUTE_VELOCITY_ERROR_TIME_INDEX) = T_CC_USED(CCIBM_COMPUTE_VELOCITY_ERROR_TIME_INDEX) + CURRENT_TIME() - TNOW
+#endif
 RETURN
 END SUBROUTINE CCIBM_COMPUTE_VELOCITY_ERROR
 
@@ -14395,7 +14473,7 @@ MESHES_LOOP : DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
             ENDDO IFC_LOOP3
 
             ! Thermodynamic divergence * vol:
-            DPCC= DPCC + (1._EB-PRFCT)*CUT_CELL(ICC)%D(JCC) + PRFCT*CUT_CELL(ICC)%DS(JCC)
+            DPCC= DPCC + ( (1._EB-PRFCT)*CUT_CELL(ICC)%D(JCC) + PRFCT*CUT_CELL(ICC)%DS(JCC) ) * CUT_CELL(ICC)%VOLUME(JCC)
 
             ! Add Pressure derivative to divergence:
             IF (IPZ>0) &
@@ -15748,7 +15826,7 @@ INTEGER :: XIAXIS,XJAXIS,XKAXIS
 INTEGER :: ISTR, IEND, JSTR, JEND, KSTR, KEND
 LOGICAL :: FOUND_POINT, INSEG, FOUNDPT
 REAL(EB):: XYZ(MAX_DIM),XYZ_PP(MAX_DIM),XYZ_IP(MAX_DIM),DV(MAX_DIM),NVEC(MAX_DIM)
-REAL(EB):: P0(MAX_DIM),P1(MAX_DIM),DIST,DISTANCE,DIR_FCT,NORM_DV,LASTDOTNVEC,DOTNVEC,A_TOT
+REAL(EB):: P0(MAX_DIM),P1(MAX_DIM),DIST,DISTANCE,DIR_FCT,NORM_DV,LASTDOTNVEC,DOTNVEC
 INTEGER :: IND_CC(IAXIS:KAXIS+1),FOUND_INBFC(1:3), BODTRI(1:2)
 INTEGER :: CCFC,NFC_CC,ICFC,INBFC,INBFC_LOC,IFCPT,IFCPT_LOC,IBOD,IWSEL,ICELL
 INTEGER, PARAMETER :: ADDVEC(1:2,1:4) = RESHAPE( (/1,0,-1,0,0,1,0,-1/), (/2,4/) )
@@ -16293,17 +16371,6 @@ MESHES_LOOP2 : DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
          ! at the CFACE wall.
 
          MIN_DIST_VEL = DIST_THRES*MIN(DXCELL(I),DYCELL(J),DZCELL(K))
-         ! Define average normal vector for boundary cut-faces in CUT_FACE(ICF):
-         DV(IAXIS:KAXIS) = 0._EB
-         A_TOT = 0._EB
-         DO IFACE=1,CUT_FACE(ICF)%NFACE
-            ICF1 = CUT_FACE(ICF)%CFACE_INDEX(IFACE)
-            DV(IAXIS:KAXIS) = DV(IAXIS:KAXIS) + CFACE(ICF1)%AREA*CFACE(ICF1)%NVEC(IAXIS:KAXIS)
-            A_TOT = A_TOT + CFACE(ICF1)%AREA
-         ENDDO
-         DV(IAXIS:KAXIS) = DV(IAXIS:KAXIS)/(A_TOT+TWO_EPSILON_EB)
-         CALL GET_DELN(DELN,DXCELL(I),DYCELL(J),DZCELL(K),NVEC=DV,CLOSE_PT=.TRUE.)
-
          NPE_LIST_START = 0
          ALLOCATE(INT_NPE(LOW_IND:HIGH_IND,0:KAXIS,1:INT_N_EXT_PTS,1:CUT_FACE(ICF)%NFACE), &
                   INT_IJK(IAXIS:KAXIS,(CUT_FACE(ICF)%NFACE+1)*DELTA_INT),                      &
@@ -16311,10 +16378,11 @@ MESHES_LOOP2 : DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
          ! Fill cell centered stencils first:
          N_CVAR_START = NPE_LIST_START
          DO IFACE=1,CUT_FACE(ICF)%NFACE
-            ! Origin in boundary point XYZ_PP(IAXIS:KAXIS):
-            XYZ_PP(IAXIS:KAXIS)         = CUT_FACE(ICF)%XYZCEN(IAXIS:KAXIS,IFACE)
             ICF1 = CUT_FACE(ICF)%CFACE_INDEX(IFACE)
             DV(IAXIS:KAXIS) = CFACE(ICF1)%NVEC(IAXIS:KAXIS)
+            CALL GET_DELN(DELN,DXCELL(I),DYCELL(J),DZCELL(K),NVEC=DV,CLOSE_PT=.TRUE.)
+            ! Origin in boundary point XYZ_PP(IAXIS:KAXIS):
+            XYZ_PP(IAXIS:KAXIS)         = CUT_FACE(ICF)%XYZCEN(IAXIS:KAXIS,IFACE)
             DO EP=1,INT_N_EXT_PTS  ! External point for face IFACE
                INT_XN(EP) = REAL(EP,EB)*DELN
                ! First cell centered variables:
@@ -17236,6 +17304,10 @@ ENDIF
 ! Finally Exchange info on messages to send among MPI processes:
 ! Populates OMESH(NOM)% : NFCC_S, IIO_FCC_S, JJO_FCC_S, KKO_FCC_S, AXS_FCC_S
 CALL FILL_IJKO_INTERP_STENCILS
+
+! Fill unpacking arrays
+IF (UNPACK_NEW) CALL CC_EXCHANGE_UNPACKING_ARRAYS
+
 
 IF(GET_CUTCELLS_VERBOSE) THEN
    CALL CPU_TIME(CPUTIME)
@@ -25860,11 +25932,11 @@ IF (GET_CUTCELLS_VERBOSE .AND. (MYID == 0)) THEN
 WRITE(LU_ERR,"(/A)") ' Computational Geometry: Sanity tests for cut-cell region'
 WRITE(LU_ERR,"(A,E11.4,A,E11.4,A,E11.4)") &
 ' GEOM Surf  Area=',AREA_GEOM,', InBoundary Cut-faces Area=',CF_AREA_INB, &
-', Relative Difference=',(AREA_GEOM-CF_AREA_INB)/(AREA_GEOM+GEOMEPS)
+', Relative Difference=',(AREA_GEOM-CF_AREA_INB)/(AREA_GEOM+TWO_EPSILON_EB)
 WRITE(LU_SETCC,"(/A)") ' Computational Geometry: Sanity tests for cut-cell region'
 WRITE(LU_SETCC,"(A,E11.4,A,E11.4,A,E11.4)") &
 ' GEOM Surf  Area=',AREA_GEOM,', InBoundary Cut-faces Area=',CF_AREA_INB, &
-', Relative Difference=',(AREA_GEOM-CF_AREA_INB)/(AREA_GEOM+GEOMEPS)
+', Relative Difference=',(AREA_GEOM-CF_AREA_INB)/(AREA_GEOM+TWO_EPSILON_EB)
 ENDIF
 
 ! Allreduce Cut-cell, GASPHASE volumes:
@@ -25885,17 +25957,17 @@ IF (N_MPI_PROCESSES > 1) THEN
    CALL MPI_ALLREDUCE(DM_XYZCEN_AUX, DM_XYZCEN, 3, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, IERR)
 
 ENDIF
-CCGP_XYZCEN(IAXIS:KAXIS) = CCGP_XYZCEN(IAXIS:KAXIS) / (CC_VOLUME_INB+GP_VOLUME)
-DM_XYZCEN(IAXIS:KAXIS)   = DM_XYZCEN(IAXIS:KAXIS)   / DM_VOLUME
+CCGP_XYZCEN(IAXIS:KAXIS) = CCGP_XYZCEN(IAXIS:KAXIS) / (CC_VOLUME_INB+GP_VOLUME+TWO_EPSILON_EB)
+DM_XYZCEN(IAXIS:KAXIS)   = DM_XYZCEN(IAXIS:KAXIS)   / (DM_VOLUME+TWO_EPSILON_EB)
 
 
 IF (GET_CUTCELLS_VERBOSE .AND. (MYID == 0)) THEN
 WRITE(LU_ERR,"(A,E11.4,A,E11.4,A,E11.4)") &
 ' GEOM Gas Volume=',DM_VOLUME-VOLUME_GEOM,', Cut/Regl Gas cells Volume=',GP_VOLUME+CC_VOLUME_INB, &
-', Relative Difference=',((DM_VOLUME-VOLUME_GEOM)-(GP_VOLUME+CC_VOLUME_INB))/(DM_VOLUME-VOLUME_GEOM)
+', Relative Difference=',((DM_VOLUME-VOLUME_GEOM)-(GP_VOLUME+CC_VOLUME_INB))/(DM_VOLUME-VOLUME_GEOM+TWO_EPSILON_EB)
 WRITE(LU_SETCC,"(A,E11.4,A,E11.4,A,E11.4)") &
 ' GEOM Gas Volume=',DM_VOLUME-VOLUME_GEOM,', Cut/Regl Gas cells Volume=',GP_VOLUME+CC_VOLUME_INB, &
-', Relative Difference=',((DM_VOLUME-VOLUME_GEOM)-(GP_VOLUME+CC_VOLUME_INB))/(DM_VOLUME-VOLUME_GEOM)
+', Relative Difference=',((DM_VOLUME-VOLUME_GEOM)-(GP_VOLUME+CC_VOLUME_INB))/(DM_VOLUME-VOLUME_GEOM+TWO_EPSILON_EB)
 ENDIF
 
 IF (GET_CUTCELLS_VERBOSE .AND. (MYID == 0)) THEN
@@ -25903,24 +25975,24 @@ IF (GET_CUTCELLS_VERBOSE .AND. (MYID == 0)) THEN
    ' GEOM Centroid               =',XYZCEN_GEOM(IAXIS:KAXIS)
    WRITE(LU_ERR,"(A,3E12.4)") &
    ' DOMAIN-GEOM Centroid        =',(DM_XYZCEN(IAXIS:KAXIS)*DM_VOLUME - XYZCEN_GEOM(IAXIS:KAXIS)*VOLUME_GEOM) / &
-   (DM_VOLUME-VOLUME_GEOM)
+   (DM_VOLUME-VOLUME_GEOM+TWO_EPSILON_EB)
    WRITE(LU_ERR,"(A,3E12.4)") &
    ' Cut/Regl Gas cells Centroid =',CCGP_XYZCEN(IAXIS:KAXIS)
    WRITE(LU_ERR,"(A,3E12.4)") &
    ' Centroid Relative Difference=',CCGP_XYZCEN(IAXIS:KAXIS)-&
    (DM_XYZCEN(IAXIS:KAXIS)*DM_VOLUME - XYZCEN_GEOM(IAXIS:KAXIS)*VOLUME_GEOM) / &
-   (DM_VOLUME-VOLUME_GEOM)
+   (DM_VOLUME-VOLUME_GEOM+TWO_EPSILON_EB)
    WRITE(LU_SETCC,"(A,3E12.4)") &
    ' GEOM Centroid               =',XYZCEN_GEOM(IAXIS:KAXIS)
    WRITE(LU_SETCC,"(A,3E12.4)") &
    ' DOMAIN-GEOM Centroid        =',(DM_XYZCEN(IAXIS:KAXIS)*DM_VOLUME - XYZCEN_GEOM(IAXIS:KAXIS)*VOLUME_GEOM) / &
-   (DM_VOLUME-VOLUME_GEOM)
+   (DM_VOLUME-VOLUME_GEOM+TWO_EPSILON_EB)
    WRITE(LU_SETCC,"(A,3E12.4)") &
    ' Cut/Regl Gas cells Centroid =',CCGP_XYZCEN(IAXIS:KAXIS)
    WRITE(LU_SETCC,"(A,3E12.4)") &
    ' Centroid Relative Difference=',CCGP_XYZCEN(IAXIS:KAXIS)-&
    (DM_XYZCEN(IAXIS:KAXIS)*DM_VOLUME - XYZCEN_GEOM(IAXIS:KAXIS)*VOLUME_GEOM) / &
-   (DM_VOLUME-VOLUME_GEOM)
+   (DM_VOLUME-VOLUME_GEOM+TWO_EPSILON_EB)
 ENDIF
 
 ! Write out the GEOM Area per SURF_ID:
@@ -32710,7 +32782,9 @@ INTEGER :: SNOD1(NOD1:NOD2), SNOD2(NOD1:NOD2)
 REAL(EB) :: XYZ_SEG1(IAXIS:KAXIS,NOD1:NOD2), XYZ_SEG2(IAXIS:KAXIS,NOD1:NOD2)
 LOGICAL :: DIFF(1:4)
 LOGICAL :: GET_SOLID_CUTFACES = .TRUE.
+LOGICAL, ALLOCATABLE, DIMENSION(:) :: DROPFACE
 REAL(EB) :: TNOW
+
 
 ! GET_CUTCELLS_VERBOSE variables:
 REAL(EB) :: CPUTIME, CPUTIME_START
@@ -33407,6 +33481,7 @@ IBNDINT_LOOP : DO IBNDINT=BNDINT_LOW,BNDINT_HIGH ! 1,2 refers to block boundary 
              NFACE = NP
 
              ! Compute area and Centroid, in local x1, x2, x3 coords:
+             ALLOCATE(DROPFACE(1:NFACE)); DROPFACE=.FALSE.
              AREAV(1:NFACE)                 = 0._EB
              XYZCEN(IAXIS:KAXIS,1:NFACE)    = 0._EB
              INXAREA(IAXIS:KAXIS,1:NFACE)   = 0._EB
@@ -33430,6 +33505,13 @@ IBNDINT_LOOP : DO IBNDINT=BNDINT_LOW,BNDINT_HIGH ! 1,2 refers to block boundary 
                                    XY(JAXIS,II2) * XY(IAXIS,II2+1) )
                 ENDDO
                 AREA = AREA / 2._EB
+                IF ( (AREA<GEOMEPS**2) .AND. (MESHES(NM)%ECVAR(INDI1,INDJ1,INDK1,IBM_EGSC,X2AXIS) == IBM_SOLID) .AND. &
+                                             (MESHES(NM)%ECVAR(INDI2,INDJ2,INDK2,IBM_EGSC,X2AXIS) == IBM_SOLID) .AND. &
+                                             (MESHES(NM)%ECVAR(INDI3,INDJ3,INDK3,IBM_EGSC,X3AXIS) == IBM_SOLID) .AND. &
+                                             (MESHES(NM)%ECVAR(INDI4,INDJ4,INDK4,IBM_EGSC,X3AXIS) == IBM_SOLID) ) THEN
+                   DROPFACE(ICF) = .TRUE.
+                   CYCLE
+                ENDIF
                 ! Now Centroids:
                 ! In x2:
                 CX2 = 0._EB
@@ -33465,6 +33547,22 @@ IBNDINT_LOOP : DO IBNDINT=BNDINT_LOW,BNDINT_HIGH ! 1,2 refers to block boundary 
                 INXSQAREA(KAXIS,ICF) = 0._EB
 
              ENDDO
+
+             ALLOCATE(CFELEM2(SIZE(CFELEM,DIM=1),SIZE(CFELEM,DIM=2))); CFELEM2 = IBM_UNDEFINED
+             NP=0
+             DO ICF=1,NFACE
+                IF(.NOT.DROPFACE(ICF)) THEN
+                   NP=NP+1
+                   CFELEM2(:,NP) = CFELEM(:,ICF)
+                ENDIF
+             ENDDO
+             CFELEM = CFELEM2
+             DEALLOCATE(CFELEM2,DROPFACE)
+             IF (NP==0) THEN
+                 MESHES(NM)%FCVAR(INDI,INDJ,INDK,IBM_FGSC,X1AXIS) = IBM_SOLID
+                 CYCLE
+             ENDIF
+             NFACE = NP
 
              ! Figure out if a cut-face is completely inside any of the
              ! others (that is, it is a hole on the GASPHASE):
@@ -33982,6 +34080,7 @@ IBNDINT_LOOP : DO IBNDINT=BNDINT_LOW,BNDINT_HIGH ! 1,2 refers to block boundary 
              NSFACE = COUNT; IF(NSFACE==0) CYCLE
 
              ! Compute area and Centroid, in local x1, x2, x3 coords:
+             ALLOCATE(DROPFACE(1:NSFACE)); DROPFACE=.FALSE.
              AREAV(1:NSFACE)                 = 0._EB
              XYZCEN(IAXIS:KAXIS,1:NSFACE)    = 0._EB
              DO ICF=1,NSFACE
@@ -34003,6 +34102,10 @@ IBNDINT_LOOP : DO IBNDINT=BNDINT_LOW,BNDINT_HIGH ! 1,2 refers to block boundary 
                                    XY(JAXIS,II2) * XY(IAXIS,II2+1) )
                 ENDDO
                 AREA = AREA / 2._EB
+                IF ( (AREA<GEOMEPS**2) ) THEN
+                   DROPFACE(ICF) = .TRUE.
+                   CYCLE
+                ENDIF
                 ! Now Centroids:
                 ! In x2:
                 CX2 = 0._EB
@@ -34027,6 +34130,19 @@ IBNDINT_LOOP : DO IBNDINT=BNDINT_LOW,BNDINT_HIGH ! 1,2 refers to block boundary 
                 XYZCEN(IAXIS:KAXIS,ICF) = (/  X1FACE(II), CX2, CX3 /)
 
              ENDDO
+
+             ALLOCATE(CFELEM2(SIZE(CFELEM,DIM=1),SIZE(CFELEM,DIM=2))); CFELEM2 = IBM_UNDEFINED
+             NP=0
+             DO ICF=1,NSFACE
+                IF(.NOT.DROPFACE(ICF)) THEN
+                   NP=NP+1
+                   CFELEM2(:,NP) = CFELEM(:,ICF)
+                ENDIF
+             ENDDO
+             CFELEM = CFELEM2
+             DEALLOCATE(CFELEM2,DROPFACE)
+             IF (NP==0) CYCLE
+             NSFACE = NP
 
              ! Figure out if a cut-face is completely inside any of the
              ! others (that is, it is a hole on the GASPHASE):
@@ -37764,6 +37880,7 @@ IF (ICC > SIZE_CUT_CELL) THEN
       CALL MOVE_ALLOC(FROM=MESHES(NM)%CUT_CELL(ICC1)%TMP              ,TO=CUT_CELL_AUX(ICC1)%TMP)
       CALL MOVE_ALLOC(FROM=MESHES(NM)%CUT_CELL(ICC1)%D                ,TO=CUT_CELL_AUX(ICC1)%D)
       CALL MOVE_ALLOC(FROM=MESHES(NM)%CUT_CELL(ICC1)%DS               ,TO=CUT_CELL_AUX(ICC1)%DS)
+      CALL MOVE_ALLOC(FROM=MESHES(NM)%CUT_CELL(ICC1)%DVOL             ,TO=CUT_CELL_AUX(ICC1)%DVOL)
       CALL MOVE_ALLOC(FROM=MESHES(NM)%CUT_CELL(ICC1)%Q                ,TO=CUT_CELL_AUX(ICC1)%Q)
       CALL MOVE_ALLOC(FROM=MESHES(NM)%CUT_CELL(ICC1)%QR               ,TO=CUT_CELL_AUX(ICC1)%QR)
       CALL MOVE_ALLOC(FROM=MESHES(NM)%CUT_CELL(ICC1)%D_SOURCE         ,TO=CUT_CELL_AUX(ICC1)%D_SOURCE)
@@ -37795,8 +37912,8 @@ IF (ICC > SIZE_CUT_CELL) THEN
       CALL MOVE_ALLOC(FROM=MESHES(NM)%CUT_CELL(ICC1)%INT_CCVARS      ,TO=CUT_CELL_AUX(ICC1)%INT_CCVARS)
       CALL MOVE_ALLOC(FROM=MESHES(NM)%CUT_CELL(ICC1)%INT_NOMIND      ,TO=CUT_CELL_AUX(ICC1)%INT_NOMIND)
 
-      CALL MOVE_ALLOC(FROM=MESHES(NM)%CUT_CELL(ICC1)%DEL_RHO_D_DEL_Z  ,TO=CUT_CELL_AUX(ICC1)%DEL_RHO_D_DEL_Z)
-      CALL MOVE_ALLOC(FROM=MESHES(NM)%CUT_CELL(ICC1)%U_DOT_DEL_RHO_Z  ,TO=CUT_CELL_AUX(ICC1)%U_DOT_DEL_RHO_Z)
+      CALL MOVE_ALLOC(FROM=MESHES(NM)%CUT_CELL(ICC1)%DEL_RHO_D_DEL_Z_VOL  ,TO=CUT_CELL_AUX(ICC1)%DEL_RHO_D_DEL_Z_VOL)
+      CALL MOVE_ALLOC(FROM=MESHES(NM)%CUT_CELL(ICC1)%U_DOT_DEL_RHO_Z_VOL  ,TO=CUT_CELL_AUX(ICC1)%U_DOT_DEL_RHO_Z_VOL)
       CALL MOVE_ALLOC(FROM=MESHES(NM)%CUT_CELL(ICC1)%USE_CC_VOL       ,TO=CUT_CELL_AUX(ICC1)%USE_CC_VOL)
 
       CUT_CELL_AUX(ICC1)%NOMICC          = MESHES(NM)%CUT_CELL(ICC1)%NOMICC
@@ -37825,9 +37942,9 @@ MESHES(NM)%CUT_CELL(ICC)%FACE_LIST = IBM_UNDEFINED
 ALLOCATE(MESHES(NM)%CUT_CELL(ICC)%VOLUME(1:NCELL),   MESHES(NM)%CUT_CELL(ICC)%RHO(1:NCELL),      &
          MESHES(NM)%CUT_CELL(ICC)%RHOS(1:NCELL),     MESHES(NM)%CUT_CELL(ICC)%RSUM(1:NCELL),     &
          MESHES(NM)%CUT_CELL(ICC)%TMP(1:NCELL),      MESHES(NM)%CUT_CELL(ICC)%D(1:NCELL),        &
-         MESHES(NM)%CUT_CELL(ICC)%DS(1:NCELL),       MESHES(NM)%CUT_CELL(ICC)%Q(1:NCELL),        &
+         MESHES(NM)%CUT_CELL(ICC)%DVOL(1:NCELL),     MESHES(NM)%CUT_CELL(ICC)%Q(1:NCELL),        &
          MESHES(NM)%CUT_CELL(ICC)%QR(1:NCELL),       MESHES(NM)%CUT_CELL(ICC)%D_SOURCE(1:NCELL), &
-         MESHES(NM)%CUT_CELL(ICC)%CHI_R(1:NCELL),    &
+         MESHES(NM)%CUT_CELL(ICC)%CHI_R(1:NCELL),    MESHES(NM)%CUT_CELL(ICC)%DS(1:NCELL),       &
          MESHES(NM)%CUT_CELL(ICC)%MIX_TIME(1:NCELL), MESHES(NM)%CUT_CELL(ICC)%H(1:NCELL),        &
          MESHES(NM)%CUT_CELL(ICC)%HS(1:NCELL),       MESHES(NM)%CUT_CELL(ICC)%RTRM(1:NCELL),     &
          MESHES(NM)%CUT_CELL(ICC)%R_H_G(1:NCELL),    MESHES(NM)%CUT_CELL(ICC)%RHO_0(1:NCELL),    &
@@ -37840,6 +37957,7 @@ MESHES(NM)%CUT_CELL(ICC)%RSUM     = 0._EB
 MESHES(NM)%CUT_CELL(ICC)%TMP      = 0._EB
 MESHES(NM)%CUT_CELL(ICC)%D        = 0._EB
 MESHES(NM)%CUT_CELL(ICC)%DS       = 0._EB
+MESHES(NM)%CUT_CELL(ICC)%DVOL     = 0._EB
 MESHES(NM)%CUT_CELL(ICC)%Q        = 0._EB
 MESHES(NM)%CUT_CELL(ICC)%QR       = 0._EB
 MESHES(NM)%CUT_CELL(ICC)%D_SOURCE = 0._EB
@@ -37895,10 +38013,9 @@ MESHES(NM)%CUT_CELL(ICC)%INT_CN    =  0._EB
 MESHES(NM)%CUT_CELL(ICC)%INT_CCVARS=  0._EB
 MESHES(NM)%CUT_CELL(ICC)%INT_NOMIND=  IBM_UNDEFINED
 
-ALLOCATE(MESHES(NM)%CUT_CELL(ICC)%DEL_RHO_D_DEL_Z(1:MAX_SPECIES,1:NCELL), &
-         MESHES(NM)%CUT_CELL(ICC)%U_DOT_DEL_RHO_Z(1:MAX_SPECIES,1:NCELL))
-MESHES(NM)%CUT_CELL(ICC)%DEL_RHO_D_DEL_Z = 0._EB
-MESHES(NM)%CUT_CELL(ICC)%U_DOT_DEL_RHO_Z = 0._EB
+ALLOCATE(MESHES(NM)%CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL(1:MAX_SPECIES,1:NCELL), &
+         MESHES(NM)%CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL(1:MAX_SPECIES,1:NCELL))
+MESHES(NM)%CUT_CELL(ICC)%DEL_RHO_D_DEL_Z_VOL = 0._EB; MESHES(NM)%CUT_CELL(ICC)%U_DOT_DEL_RHO_Z_VOL = 0._EB
 
 RETURN
 
@@ -38755,7 +38872,7 @@ LOGICAL :: READ_BINARY
 
 INTEGER :: IJF, IJB, IJE, NM
 INTEGER, ALLOCATABLE, DIMENSION(:) :: B_IND,E_IND,F_IND
-REAL(EB) :: XLOW,XHI,YLOW,YHI,ZLOW,ZHI,DELX,DELY
+REAL(EB) :: XLOW,XHI,YLOW,YHI,ZLOW,ZHI,DELX,DELY,DELTZ
 
 LOGICAL :: IS_TERRAIN,EXTEND_TERRAIN,WRITE_WARNING
 REAL(EB):: ZVAL_HORIZON, ZVAL_FACTOR
@@ -38778,10 +38895,10 @@ INTEGER :: INOD, IERR
 
 NAMELIST /GEOM/ AUTO_TEXTURE,BNDF_GEOM,BINARY_DIR,BINARY_NAME,COLOR,CYLINDER_ORIGIN,CYLINDER_AXIS,&
                 CYLINDER_RADIUS,CYLINDER_LENGTH,CYLINDER_NSEG_THETA,CYLINDER_NSEG_AXIS,&
-                EXTRUDE,EXTEND_TERRAIN,FACES,ID,IJK,MOVE_ID,MATL_ID,N_LAT,N_LEVELS,N_LONG,POLY,PROP_ID,&
+                EXTRUDE,EXTEND_TERRAIN,FACES,ID,IJK,IS_TERRAIN,MOVE_ID,MATL_ID,N_LAT,N_LEVELS,N_LONG,POLY,PROP_ID,&
                 READ_BINARY,RGB,SNAP_TO_GRID,SPHERE_ORIGIN,SPHERE_RADIUS,SPHERE_TYPE,SURF_ID,SURF_IDS,SURF_ID6,&
                 TEXTURE_MAPPING,TEXTURE_ORIGIN,TEXTURE_SCALE,&
-                VERTS,VOLUS,XB,ZMIN,ZVALS,ZVAL_HORIZON,IS_TERRAIN
+                VERTS,VOLUS,XB,ZMIN,ZVALS,ZVAL_HORIZON
 
 ! first pass - count number of &GEOMs
 
@@ -39361,12 +39478,19 @@ READ_GEOM_LOOP: DO N=1,N_GEOMETRY
       ENDIF
       ! Move Low Z position of terrain to less that number od cutcells, s.t. they don't get computed on the bottom.
       ZMIN2= 1.E10_EB
+      DELTZ= 0._EB
       DO NM=1,NMESHES
+         DELTZ = MAX( DELTZ ,               REAL(NGUARD,EB)/REAL(MESHES(NM)%KBAR,EB)*(MESHES(NM)%ZF-MESHES(NM)%ZS) )
          ZMIN2 = MIN( ZMIN2 , MESHES(NM)%ZS-REAL(NGUARD,EB)/REAL(MESHES(NM)%KBAR,EB)*(MESHES(NM)%ZF-MESHES(NM)%ZS) )
       ENDDO
-      ZHI  = MAXVAL(VERTS(3*1:3:3*N_VERTS))
-      ZLOW = MINVAL(VERTS(3*1:3:3*N_VERTS))
-      ZLOW = MIN(REAL(FLOOR(ZLOW-0.1_EB*(ZHI-ZLOW)),EB),ZMIN,ZMIN2)
+      ZHI  =-1.E10_EB
+      ZLOW = 1.E10_EB
+      DO I=1,N_VERTS
+         ZLOW = MIN(ZLOW,VERTS(3*I))
+         ZHI  = MAX(ZHI ,VERTS(3*I))
+      ENDDO
+      ! Take the min of LOWZ_VERTS-NGUARD*DZ, ZMIN from input, ZMIN_MESH-NGUARD*DZ:
+      ZLOW = MIN(ZLOW-DELTZ,ZMIN,ZMIN2)
 
       ZVAL_FACTOR = 1._EB
       IF(ZVAL_HORIZON > MAX_VAL) ZVAL_FACTOR = 0._EB ! Not defined, use boundary polygon heights.
@@ -40278,7 +40402,7 @@ INTEGER, INTENT(OUT)   :: N_FACES,START_FACE_LO,START_FACE_HI,START_FACE_MID,FAC
 
 ! Local Variables:
 REAL(EB), ALLOCATABLE, DIMENSION(:) :: PVERTS,PVERTS2
-REAL(EB):: XYZCEN(IAXIS:KAXIS)=0._EB, NVEC(IAXIS:KAXIS)=0._EB, DV1(IAXIS:KAXIS), DV2(IAXIS:KAXIS), N(IAXIS:KAXIS), SINANG
+REAL(EB):: XYZCEN(IAXIS:KAXIS), NVEC(IAXIS:KAXIS), DV1(IAXIS:KAXIS), DV2(IAXIS:KAXIS), N(IAXIS:KAXIS), SINANG
 LOGICAL :: IS_CONVEX, VERT_DROPPED, NOPT_INTRI
 INTEGER :: IM1, IP1, NVERTS2, V0, V1, V2, COUNT, COUNT_OUT, NLIST, NLIST_OLD, VERT_START, IVERT, IVM1, IV, IVP1, &
            I1, I2, I3, I4, IDUM, IFACE, JP1, JEND, INT_FLG
@@ -40304,6 +40428,7 @@ DO I=1,N_POLY_VERTS
 ENDDO
 PVERTS(3*(N_POLY_VERTS+1)-2:3*(N_POLY_VERTS+1)) = PVERTS(1:3)
 ! Define average normal:
+XYZCEN(IAXIS:KAXIS)=0._EB
 DO I=1,N_POLY_VERTS
    XYZCEN(IAXIS:KAXIS) = XYZCEN(IAXIS:KAXIS) + PVERTS(3*I-2:3*I)
 ENDDO
@@ -40311,6 +40436,7 @@ XYZCEN = XYZCEN / REAL(N_POLY_VERTS,EB)
 ! Define an area averaged normal vector (note: this might need to change to average normal to the set of points in a
 ! least squares sense, i.e. eigenvector associated with smallest eigenvalue of the covariance matrix of vertices positions
 ! respect to XYZCEN):
+NVEC(IAXIS:KAXIS)=0._EB
 DO I=1,N_POLY_VERTS
    DV1(IAXIS:KAXIS) = PVERTS(3*I-2:3*I    ) - XYZCEN(IAXIS:KAXIS)
    DV2(IAXIS:KAXIS) = PVERTS(3*I+1:3*(I+1)) - XYZCEN(IAXIS:KAXIS)

@@ -142,6 +142,7 @@ $QFDS -o 4 -d Complex_Geometry rotated_cube_45deg_384_exp.fds
 $QFDS -o 4 -d Complex_Geometry rotated_cube_45deg_384_imp.fds
 
 $QFDS -d Complex_Geometry cone_1mesh.fds
+$QFDS -d Complex_Geometry geom_mass_file_test.fds
 
 $QFDS -d Controls activate_vents.fds
 $QFDS -d Controls control_test.fds
@@ -398,6 +399,8 @@ $QFDS -d Pyrolysis cable_11_jacket_mcc.fds
 $QFDS -d Pyrolysis cable_23_jacket_mcc.fds
 $QFDS -d Pyrolysis cable_701_jacket_mcc.fds
 $QFDS -d Pyrolysis cell_burn_away.fds
+$QFDS -d Pyrolysis cone_demo.fds
+$QFDS -d Pyrolysis cone_demo_2.fds
 $QFDS -d Pyrolysis birch_tga_1step_2.fds
 $QFDS -d Pyrolysis birch_tga_1step_20.fds
 $QFDS -d Pyrolysis enthalpy.fds
@@ -579,6 +582,7 @@ $QFDS -d Sprinklers_and_Sprays bucket_test_3.fds
 $QFDS -d Sprinklers_and_Sprays bucket_test_4.fds
 $QFDS -d Sprinklers_and_Sprays cannon_ball.fds
 $QFDS -d Sprinklers_and_Sprays cascade.fds
+$QFDS -p 2 -d Sprinklers_and_Sprays e_coefficient.fds
 $QFDS -d Sprinklers_and_Sprays droplet_distributions.fds
 $QFDS -d Sprinklers_and_Sprays droplet_distributions_2.fds
 $QFDS -d Sprinklers_and_Sprays flow_rate.fds
@@ -591,8 +595,9 @@ $QFDS -d Sprinklers_and_Sprays particle_drag_U100_N16.fds
 $QFDS -d Sprinklers_and_Sprays particle_drag_U50_N1600.fds
 $QFDS -d Sprinklers_and_Sprays particle_drag_U100_N1600.fds
 $QFDS -d Sprinklers_and_Sprays particle_drag_U150_N1600.fds
-$QFDS -p 2 -d Sprinklers_and_Sprays e_coefficient.fds
 $QFDS -d Sprinklers_and_Sprays particle_flux.fds
+$QFDS -d Sprinklers_and_Sprays particle_heating_convection.fds
+$QFDS -d Sprinklers_and_Sprays particle_heating_radiation.fds
 $QFDS -d Sprinklers_and_Sprays sphere_drag_1.fds
 $QFDS -d Sprinklers_and_Sprays sphere_drag_2.fds
 $QFDS -d Sprinklers_and_Sprays terminal_velocity_dt_1_0.fds
@@ -733,6 +738,7 @@ $QFDS -d Turbulence ramp_prof_u_z.fds
 $QFDS -d WUI Bova_1a.fds
 $QFDS -d WUI Bova_1b.fds
 $QFDS -d WUI Bova_4a.fds
+$QFDS -d WUI char_oxidation_1.fds
 $QFDS -d WUI dragon_5a.fds
 $QFDS -p 2 -d WUI ground_vegetation_conv.fds
 $QFDS -p 2 -d WUI ground_vegetation_drag.fds
