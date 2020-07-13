@@ -220,7 +220,6 @@ LOGICAL :: UVW_RESTART=.FALSE.              !< Initialize velocity field with va
 LOGICAL :: PARTICLE_CFL=.FALSE.             !< Include particle velocity as a constraint on time step
 LOGICAL :: IBM_FEM_COUPLING=.FALSE.
 LOGICAL :: ENTHALPY_TRANSPORT=.TRUE.
-LOGICAL :: CONSTANT_H_SOLID_TO_DROPLET=.TRUE. !< Use constant heat transfer coefficient between walls and droplets
 LOGICAL :: POTENTIAL_TEMPERATURE_CORRECTION=.FALSE.
 LOGICAL :: RTE_SOURCE_CORRECTION=.TRUE.     !< Apply a correction to the radiation source term to achieve desired rad fraction
 LOGICAL :: LAPLACE_PRESSURE_CORRECTION=.FALSE.
@@ -350,6 +349,7 @@ REAL(EB) :: NORTH_BEARING=0._EB                !< North bearing for terrain map
 REAL(EB) :: LATITUDE=10000._EB                 !< Latitude for geostrophic calculation
 REAL(EB) :: GEOSTROPHIC_WIND(2)=0._EB          !< Wind vector (m/s)
 REAL(EB) :: DY_MIN_BLOWING=1.E-8_EB            !< Parameter in blowing algorithm (m)
+REAL(EB) :: MINIMUM_FILM_THICKNESS=1.E-5_EB    !< Minimum thickness of liquid film on a solid surface (m)
 
 REAL(EB), PARAMETER :: TMPM=273.15_EB                       !< Melting temperature of water, conversion factor (K)
 REAL(EB), PARAMETER :: P_STP=101325._EB                     !< Standard pressure (Pa)
@@ -357,12 +357,13 @@ REAL(EB), PARAMETER :: R0=8314.472_EB                       !< Gas constant (J/K
 REAL(EB), PARAMETER :: SIGMA=5.670373E-8_EB                 !< Stefan-Boltzmann constant (W/m2/K4)
 REAL(EB), PARAMETER :: K_BOLTZMANN=1.3806488E-23_EB         !< Parameter in soot algorithm
 REAL(EB), PARAMETER :: EARTH_OMEGA=7.272205216643040e-05_EB !< Earth rotation rate [radians/s] = 2*pi/(24*3600)
+REAL(EB), PARAMETER :: VON_KARMAN_CONSTANT=0.41_EB          !< von Karman constant
 
 ! Parameters associated with parallel mode
 
 INTEGER :: MYID=0                                           !< The MPI process index, starting at 0
 INTEGER :: N_MPI_PROCESSES=1                                !< Number of MPI processes
-INTEGER :: EVAC_PROCESS=-1                                 
+INTEGER :: EVAC_PROCESS=-1
 INTEGER :: LOWER_MESH_INDEX=1000000000                      !< Lower bound of meshes controlled by the current MPI process
 INTEGER :: UPPER_MESH_INDEX=-1000000000                     !< Upper bound of meshes controlled by the current MPI process
 LOGICAL :: PROFILING=.FALSE.
@@ -379,7 +380,7 @@ REAL(EB) :: TIME_SHRINK_FACTOR                              !< Factor to reduce 
 REAL(EB) :: RELAXATION_FACTOR=1._EB                         !< Factor used to relax normal velocity nudging at immersed boundaries
 REAL(EB) :: MPI_TIMEOUT=300._EB                             !< Time to wait for MPI messages to be received (s)
 REAL(EB) :: DT_END_MINIMUM=TWO_EPSILON_EB                   !< Smallest possible final time step (s)
-REAL(EB) :: DT_END_FILL=1.E-6_EB                            
+REAL(EB) :: DT_END_FILL=1.E-6_EB
 
 ! Combustion parameters
 
@@ -615,6 +616,7 @@ LOGICAL :: COMPUTE_CUTCELLS_ONLY=.FALSE.
 LOGICAL :: CC_ZEROIBM_VELO=.FALSE.
 LOGICAL :: CC_SLIPIBM_VELO=.FALSE.
 LOGICAL :: CC_VELOBC_FLAG=.FALSE.
+LOGICAL :: CC_OMEEGR_FLAG=.FALSE.
 LOGICAL :: CC_FORCE_PRESSIT=.FALSE.
 
 ! Threshold factor for volume of cut-cells respect to volume of Cartesian cells:

@@ -18,7 +18,6 @@
 {\input{../Bibliography/gitrevision}}
 {\newcommand{\gitrevision}{unknown} }
 
-
 \begin{document}
 
 \bibliographystyle{unsrt}
@@ -145,7 +144,7 @@ to test all of the various features of the model.
 Mohammed Assal                          & CFD Algeria                                                               \\ \hline
 Choon-Bum Choi                          & Building and Tunnel Technologies Inc. (BNTTEK), Korea                     \\ \hline
 William J. Ferrante                     & Roosevelt Fire District, Hyde Park, New York, USA                         \\ \hline
-Emanuele Gissi                          & Corpo nazionale dei Vigili del Fuoco, Italy                               \\ \hline
+Emanuele Gissi                          & Corpo Nazionale dei Vigili del Fuoco, Italy                               \\ \hline
 Timothy M. Groch                        & Engineering Planning and Management, Inc., Framingham, Massachusetts, USA \\ \hline
 Georges Guigay                          & Mannvit Engineering, Iceland                                              \\ \hline
 Simon J. Ham                            & Fire Safety Engineering Consultants Limited, UK                           \\ \hline
@@ -538,28 +537,26 @@ where {\ct N} is the number of OpenMP threads to assign to each MPI process for 
 
 If you wish to run FDS on more than one computer, do the following:
 \begin{enumerate}
-\item Type the following command:
+\item Create a text file, say {\ct hostfile.txt}, and in it list, line by line, the names of your computers.
+\item Test your network by running the following test program:
 
-    {\ct mpiexec -hosts 2 <my\_computer> 1 <other\_computer> 1 test\_mpi}
+    {\ct mpiexec -n <procs> -f hostfile.txt test\_mpi}
 
-    If this command returns a ``Hello World'' message from your computer and the other computer on your network, proceed to the next step. If this command fails, check that you can ``see'' the other machine by pinging it, and check that the other computer can ``see'' your computer as well. Also, make sure that the same version of FDS is installed on the other computer.
+    where {\ct <procs>} is the number of computers you want to test. If this command returns a ``Hello World'' message from each of your computers, proceed to the next step. If this command fails, check that you can ``see'' the other machines by ``pinging'' them, and check that the other computer can ``see'' your computer as well. Also, make sure that the same version of FDS is installed on the other computers.
 
 \item Share (with both read and write privilege) a working directory on your machine. Do not put this directory within the ``Program Files'' folder because it is write-protected. Share the working directory with everybody so that all other computers can see it. Note how this directory is defined on the other computers. Sometimes it is {\ct \textbackslash\textbackslash<my\_computer>\textbackslash<my\_shared\_directory>\textbackslash} and sometimes it is defined via the numerical IP address, like {\ct \textbackslash\textbackslash129.6.129.87\textbackslash<my\_shared\_directory>\textbackslash}. The definition depends on the way your domain name server (DNS) works. In any case, do not leave blank spaces within any directory or file names. We have found that blanks create all sorts of trouble. Unless you are a DOS/Windows expert, avoid them.
 
 \item Within the command prompt, {\ct cd} to the working directory. Find or create within the working directory a relatively small, simple, two mesh FDS input file. At the command prompt, type:
 
-   {\ct mpiexec -hosts 2 fred 1 ethel 1 -wdir \textbackslash\textbackslash...\textbackslash... fds job\_name.fds}
+   {\ct mpiexec -n <procs> -ppn <procs per node> -f hostfile.txt fds job\_name.fds}
 
-   where {\ct fred} and {\ct ethel} are the names of two computers on your network. Remember to add the argument {\ct -env OMP\_NUM\_THREADS N} to set the number of OpenMP threads per MPI process on all computers. The default is {\em not} 1, but rather depends on the number of logical processors your computer has. If you accidently set too many OpenMP threads, you can overload your logical processors and reduce the job efficiency.
+   where {\ct <procs>} is the number of MPI processes that you are launching and {\ct <procs per node>} is the number of MPI processes to run on each computer. Add the argument
 
-\item If successful, you should see the usual FDS printout indicating the processes being assigned to the computers. If unsuccessful, try running the case on your own computer:
+   {\ct -env OMP\_NUM\_THREADS <OpenMP threads>}
 
-   {\ct mpiexec -hosts 1 fred 2 -wdir \textbackslash\textbackslash...\textbackslash... fds job\_name.fds}
+   to set the number of OpenMP threads per MPI process on all computers. The default is {\em not} 1, but rather depends on the number of logical processors your computer has. If you accidently set too many OpenMP threads, you can overload your logical processors and reduce the job efficiency.
 
-   If this is not successful, check with your network administrator or monitor the FDS help forums for advice.
-\item If you plan to use more than just a few computers to run the job, create a text file, say, {\ct hostfile.txt}, and list, line by line, the name of each computer, followed by the number of MPI processes per computer.
-
-   {\ct mpiexec -hostfile hostfile.txt -env ... -wdir ... fds job\_name.fds}
+\item If successful, you should see the usual FDS printout indicating the processes being assigned to the computers. If not successful, check with your network administrator or monitor the FDS help forums for advice.
 \end{enumerate}
 
 
@@ -1760,6 +1757,7 @@ This case demonstrates the use of baroclinic correction for an axially-symmetric
 
 A common application of FDS is tunnel fires, but simulations of fires in long, relatively tight tunnels can have spurious fluctuations in the pressure field that can lead to numerical instabilities. If a numerical instability occurs in a simulation involving a tunnel, you might try the following remedies:
 \begin{enumerate}
+\item Set {\ct CONSTANT\_SPECIFIC\_HEAT\_RATIO=.TRUE.} on the {\ct MISC} line.  For long tunnels the background pressure variation in the streamwise direction can be significant and this variation is not accounted for in FDS.  In tunnels with significant heat release, the equivalence expression (see Eq.~(B.28) of the FDS Tech Guide \cite{FDS_Math_Guide}) for the divergence (energy equation) may be violated locally if variable temperature specific heats are used (FDS default).  This error is grid dependent and therefore does not allow convergence of the numerical solution.  At present, the best work-around for this problem is to avoid the error by using constant specific heats.
 \item Reduce the value of {\ct PRESSURE\_TOLERANCE} on the {\ct PRES} line to alleviate the mismatch between old and new pressure fields. The default value is $20/\dx^2$. A good value to try would be 1/5 to 1/10 of the default value.
 \item If you are using multiple meshes, reduce the value of {\ct VELOCITY\_TOLERANCE} on the {\ct PRES} line to force a tighter match of velocities at the mesh boundaries. The default value of {\ct VELOCITY\_TOLERANCE} (with units of m/s) is $\dx/2$. You may also want to increase the value of {\ct MAX\_PRESSURE\_ITERATIONS} which has a default value of 10. Try 50 as a starting point, and monitor the number of pressure iterations per time step in the {\ct CHID.out} file.
 \item Create {\ct OPEN} vents at various points along the length of the tunnel, near or at the floor. This models natural leakage in the tunnel, and alleviates, to some extent, wild oscillations in pressure. Note that even if the pressure equation is solved perfectly over the entire domain, the low Mach number assumption will still lead to fictitiously large fluctuations in pressure. The {\ct OPEN} boundaries can help relieve these pressure oscillations.
@@ -3004,7 +3002,7 @@ If you want to specify the convective heat transfer coefficient, you can set it 
 
 \subsubsection{Specifying the Heat Flux at a Solid Surface}
 
-Instead of altering the convective heat transfer coefficient, you may specify a fixed heat flux directly.  Two methods are available to do this.  The first is to specify a {\ct NET\_HEAT\_FLUX} in units of kW/m$^2$.  When this is specified FDS will compute the surface temperature required to ensure that the combined radiative and convective heat flux from the surface is equal to the {\ct NET\_HEAT\_FLUX}.  The second method is to specify separately the {\ct CONVECTIVE\_HEAT\_FLUX}, in units of kW/m$^2$, and the radiative heat flux.  The radiative heat flux is specified  by setting both {\ct TMP\_FRONT} and {\ct EMISSIVITY} appropriately on the {\ct SURF} line. Note that if you wish there to be only a convective heat flux from a surface, then the {\ct EMISSIVITY} should be set to zero.  If {\ct NET\_HEAT\_FLUX} or {\ct CONVECTIVE\_HEAT\_FLUX} is positive, the wall heats up the surrounding gases. If {\ct NET\_HEAT\_FLUX} or {\ct CONVECTIVE\_HEAT\_FLUX} is negative, the wall cools the surrounding gases.
+Instead of altering the convective heat transfer coefficient, you may specify a fixed heat flux directly.  Two methods are available to do this.  The first is to specify a {\ct NET\_HEAT\_FLUX} in units of kW/m$^2$.  When this is specified FDS will compute the surface temperature required to ensure that the combined radiative and convective heat flux from the surface is equal to the {\ct NET\_HEAT\_FLUX}. The second method is to specify the {\ct CONVECTIVE\_HEAT\_FLUX}, in units of kW/m$^2$. The radiative flux is then determined based on the {\ct EMISSIVITY} on the {\ct SURF} line and the wall temperature needed to get the desired {\ct CONVECTIVE\_HEAT\_FLUX}. Note that if you wish there to be only a convective heat flux from a surface, then the {\ct EMISSIVITY} should be set to zero.  If {\ct NET\_HEAT\_FLUX} or {\ct CONVECTIVE\_HEAT\_FLUX} is positive, the wall heats up the surrounding gases. If {\ct NET\_HEAT\_FLUX} or {\ct CONVECTIVE\_HEAT\_FLUX} is negative, the wall cools the surrounding gases. You cannot specify {\ct TMP\_FRONT} with either {\ct NET\_HEAT\_FLUX} or {\ct CONVECTIVE\_HEAT\_FLUX} since both inputs require FDS to compute the wall temperature to get the desired flux.
 
 \subsubsection{Logarithmic Law of the Wall}
 
@@ -6138,7 +6136,7 @@ The frequency of calls to the radiation solver can be changed from every 3 time 
 
 If you are using multiple meshes, the radiation solver cannot transfer energy from mesh to mesh within a single time step. If you notice an obvious delay in the propagation of radiative intensity from one mesh to another, you can increase the number of times the radiative intensity is updated within a single time step using {\ct RADIATION\_ITERATIONS}, which is 1 by default. You rarely need to do this, unless it is obvious from the animation of various slice files.
 
-The radiation solver is called before the start of the calculation to establish the radiation field in the event that you specify something to have a non-ambient temperature initially. By default, the radiation and wall boundary routines are iterated three times to establish thermal equilibrium. To change the number of iterations, set {\ct NUMBER\_INITIAL\_ITERATIONS} on the {\ct RADI} line.
+The radiation solver is called before the start of the calculation to establish the radiation field in the event that you specify something to have a non-ambient temperature initially. By default, the radiation and wall boundary routines are iterated three times to establish thermal equilibrium. To change the number of iterations, set {\ct INITIAL\_RADIATION\_ITERATIONS} on the {\ct RADI} line.
 
 
 
@@ -6291,6 +6289,8 @@ By specifying a {\ct SPEC\_ID}, you are implicitly invoking the droplet evaporat
 \label{thermal_part_props}
 
 The properties you need to supply for a liquid droplet depend on whether or not the {\ct SPEC\_ID} is listed in Table~\ref{tab:gasspecies}, and if the column labelled ``Liquid'' is checked with a ``Y'', meaning that its liquid properties are known. The following sub-sections provide instructions on what to do in various instances. Note that the {\ct INITIAL\_TEMPERATURE} ($^\circ$C) of the liquid droplets is specified on the {\ct PART} line. Its default value is the overall ambient temperature of the simulation, {\ct TMPA}, from the {\ct MISC} line.
+
+Heat transfer and evaporation from liquid droplets to the gas uses correlations for the heat and mass transfer coefficients. These can instead be respectively specified using {\ct HEAT\_TRANSFER\_COEFFICIENT\_GAS} and {\ct MASS\_TRANSFER\_COEFFICIENT} on the {\ct PART} line.
 
 \subsubsection{Known Liquid/Gas Species}
 
@@ -6520,9 +6520,9 @@ If you are modeling a relatively dense collection of solid particles, like veget
 
 The absorption and emission of thermal radiation by a group of solid particles is controlled by the absorption coefficient:
 \be
-   \kappa_{\rm p} = \frac{\sum C_{\rm s} \, A_{\rm p,s}}{V}
+   \kappa_{\rm p} = \frac{\sum \, A_{\rm p,s}}{4 \, V}
 \ee
-where $C_{\rm s}$ is the shape factor (ratio of cross sectional area to surface area) of the class of particles, $A_{\rm p,s}$ is the surface area of the particle, and $V$ is the volume of the grid cell. You can specify the {\ct SHAPE\_FACTOR} of a class of particles on the {\ct PART} line. The default value is that of a sphere, 0.25.
+where $A_{\rm p,s}$ is the surface area of the particle and $V$ is the volume of the grid cell.
 
 
 \subsection{Size Distribution}
@@ -6874,11 +6874,11 @@ Modeling fire suppression by water has three principal components: transporting 
 \label{info:surface_droplets}
 \label{cascade}
 
-When a droplet strikes a solid surface\footnote{If you do not want droplets to accumulate on solid surfaces, set {\ct ALLOW\_SURFACE\_PARTICLES=.FALSE.} on the {\ct MISC} line. It is normally {\ct .TRUE.}}, it sticks and is reassigned a new speed and direction. If the surface is horizontal, the direction is randomly chosen. If vertical, the direction is downwards. The parameters {\ct HORIZONTAL\_VELOCITY} and {\ct VERTICAL\_VELOCITY} on the {\ct PART} line allow you to control the speed at which droplets move horizontally or vertically (downward). The defaults are 0.2~m/s and 0.5~m/s, respectively.
+When a liquid\footnote{Solid particles do not stick to solid surfaces, but they are redirected downwards.} droplet strikes a solid surface\footnote{If you do not want droplets to accumulate on solid surfaces, set {\ct ALLOW\_SURFACE\_PARTICLES=.FALSE.} on the {\ct MISC} line. It is normally {\ct .TRUE.}}, it sticks and is reassigned a new speed and direction. If the surface is horizontal, the direction is randomly chosen. If vertical, the direction is downwards. The parameters {\ct HORIZONTAL\_VELOCITY} and {\ct VERTICAL\_VELOCITY} on the {\ct PART} line allow you to control the speed at which droplets move horizontally or vertically (downward). The defaults are 0.2~m/s and 0.5~m/s, respectively.
 
-When a liquid droplet hits a solid surface, it is assumed to form a film for the purpose of calculating heat transfer between the liquid and the solid surface. Thus, its diameter is not important because it is assumed to mix with other droplets forming the film. However, when the droplet leaves the solid surface in the form of a ``drip,'' it reforms into a droplet, but its new diameter is assumed to be 1000~$\mu$m unless you specify an alternative {\ct SURFACE\_DIAMETER} on the {\ct PART} line.
+When a liquid droplet hits a solid surface, it is assumed to form a thin film that is assumed to be no less than 0.00001~m thick. This value, {\ct MINIMUM\_FILM\_THICKNESS} (m), can be changed on the {\ct MISC} line. The diameter of the droplet, once it strikes a solid surface, is not important because it is assumed to mix with other droplets forming the film. However, when the droplet leaves the solid surface in the form of a ``drip,'' it reforms into a droplet, and its new diameter is assumed to be 1000~$\mu$m unless you specify an alternative {\ct SURFACE\_DIAMETER} on the {\ct PART} line in units of $\mu$m.
 
-The heat transfer coefficient from solid to liquid is constant, by default, and controlled by {\ct PART} property {H\_SOLID\_TO\_DROPLET}. To turn on an experimental model that calculates that dynamically, you should set {\ct CONSTANT\_H\_SOLID\_TO\_DROPLET=.FALSE.} on the {\ct MISC} line.
+The heat transfer coefficient between the solid and liquid is constant by default and specified by the {\ct PART} parameter {\ct HEAT\_TRANSFER\_COEFFICIENT\_SOLID}. Its default value is 300~W/(m$^2 \cdot$K). To turn on an experimental model that calculates this coefficient dynamically, just set its value to some negative number, say -1.
 
 There are some applications, like the suppression of racked storage commodity fires, where it is useful to allow water droplets to move horizontally along the underside of a solid object. It is difficult to model this phenomenon precisely because it involves surface tension, surface porosity and absorption, and complicated geometry. However, a way to capture some of the effect is to set {\ct ALLOW\_UNDERSIDE\_PARTICLES=.TRUE.} on the {\ct MISC} line. It is normally false. Also, note that when droplets hit obstructions, the vertical direction is assumed to coincide with the $z$ axis, regardless of any change to the gravity vector, {\ct GVEC}.
 
@@ -7444,6 +7444,23 @@ Consider the sample case called {\ct WUI/char\_oxidation\_1.fds} where $m=0.0531
 \end{figure}
 
 
+\subsection{Vegetation Decomposition in an Inert Environment}
+\label{char_oxidation_2}
+
+Consider a sample case called {\ct Verification/WUI/char\_oxidation\_2.fds} which involves a single pine needle with initial temperature $T_{\rm s,i}=293.15$~K introduced into an adiabatic box with a volume $V=0.001$~m$^3$ and initial temperature $T_{\rm g,i}=1073.15$~K. The needle is a cylinder with length $L=0.1$~m and radius $r=0.0005$~m. It is composed of plant matter with a density of $\rho_{\rm s}=500$~kg/m$^3$, specific heat $c_{\rm s}=1$~kJ/(kg$\cdot$K), and mass $m_{\rm p}=\pi r^2 L \rho_{\rm s}$. The box is initially filled with nitrogen and oxygen, the latter with an initial mass fraction of 0.05. The vegetation undergoes two reactions, one in which $(1-\nu_{\rm char}) \, m_{\rm p}$ is converted to fuel gas and $\nu_{\rm char} \, m_{\rm p}$ to solid char, and the second in which the char oxidizes to form CO$_2$ gas and solid ash. The char yield $\nu_{\rm char}=0.25$ and the ash yield $\nu_{\rm ash}=0.02$. Note that the ash yield is the faction of char that is converted to ash, not the fraction of the original pine needle. The internal energy gained by the gas, $\Delta E_{\rm gas}$, is equal to the energy lost by the pine needle minus the energies associated with the endothermic reaction 1 and exothermic reaction 2:
+\be
+   \Delta E_{\rm gas} =  m_{\rm p}  \, \left( (1-\nu_{\rm char} \nu_{\rm ash}) \, c_{\rm s} \, T_{\rm s,i} - \Delta h_{\rm pyr} - \nu_{\rm char} \, \Delta h_{\rm char} \right)
+\ee
+$\Delta h_{\rm pyr}=400$~kJ/kg is the heat of reaction 1 and $\Delta h_{\rm char}=-32000$~kJ/kg is the heat of reaction 2. The top left plot in Fig.~\ref{char_oxidation_2_fig} displays the evolution in time of the total mass of the pine needle (foliage), the virgin material (dry foliage), char, and ash. The top right plot displays the wood fuel vapor, CO$_2$, and O$_2$. The bottom left plot displays the energy lost by the particle and gained by the gas, $\Delta E_{\rm gas}$. The bottom right plot displays the temperature of the pine needle.
+\begin{figure}[ht]
+\includegraphics[height=2.2in]{SCRIPT_FIGURES/char_oxidation_2_solid_mass}
+\includegraphics[height=2.2in]{SCRIPT_FIGURES/char_oxidation_2_mass} \\
+\includegraphics[height=2.2in]{SCRIPT_FIGURES/char_oxidation_2_energy}
+\includegraphics[height=2.2in]{SCRIPT_FIGURES/char_oxidation_2_temp}
+\caption[The {\ct char\_oxidation\_2} test case]{(Top left) Mass of virgin foliage, char and ash. (Top right) Total mass of solid and fuel vapor, CO$_2$, and O$_2$. (Lower left) Energy lost by the pine needle (black) and gained by the gas (red). (Bottom right) Surface temperature of the pine needle and mean gas temperature of the enclosure.}
+\label{char_oxidation_2_fig}
+\end{figure}
+
 
 
 \section{Lagrangian Particle Model}
@@ -7455,8 +7472,7 @@ Lagrangian particles can be used to represent different types of vegetation, lik
 First, the {\ct PART} line defines a class of solid particles that represent pine needles:
 \begin{lstlisting}
 &PART ID='pine needles', SAMPLING_FACTOR=1, SURF_ID='wet vegetation',
-      DRAG_COEFFICIENT=2.8, SHAPE_FACTOR=0.15,
-      PROP_ID='needle image', STATIC=.TRUE. /
+      DRAG_COEFFICIENT=2.8, PROP_ID='needle image', STATIC=.TRUE. /
 \end{lstlisting}
 {\ct STATIC=.TRUE.} specifies that the needles do not move, and {\ct SAMPLING\_FACTOR=1} specifies that each needle is to be shown in Smokeview. More importantly, this line specifies a drag coefficient for the needles based on wind tunnel measurements made at NIST~\cite{Falkenstein-Smith:2018}. The force per unit volume exerted by the vegetation is given by:
 \be
@@ -11143,7 +11159,6 @@ $\Delta t$={\ct T\_END-T\_BEGIN}
 {\ct CHECK\_HT}                                     & Logical      & Section~\ref{info:HT}                   &            & {\ct .FALSE.}     \\ \hline
 {\ct CHECK\_VN}                                     & Logical      & Section~\ref{info:VN}                   &            & {\ct .TRUE.}      \\ \hline
 {\ct CNF\_CUTOFF}                                   & Real         & Section~\ref{info:particle_size}        &            & 0.005             \\ \hline
-{\ct CONSTANT\_H\_SOLID\_TO\_DROPLET}               & Real         & Section~\ref{info:surface_droplets}     &            & .TRUE.            \\ \hline
 {\ct \footnotesize CONSTANT\_SPECIFIC\_HEAT\_RATIO} & Logical      & Section~\ref{info:Enthalpy}             &            & {\ct .FALSE.}     \\ \hline
 {\ct C\_RNG}                                        & Real         & Section~\ref{info:LES}                  &            & 0.20              \\ \hline
 {\ct C\_RNG\_CUTOFF}                                & Real         & Section~\ref{info:LES}                  &            & 10.               \\ \hline
@@ -11172,6 +11187,7 @@ $\Delta t$={\ct T\_END-T\_BEGIN}
 {\ct LEVEL\_SET\_MODE}                              & Integer      & Section~\ref{info:level_set}            &            & 0                 \\ \hline
 {\ct MAXIMUM\_VISIBILITY}                           & Real         & Section~\ref{info:visibility}           &  m         &  30               \\ \hline
 {\ct MAX\_LEAK\_PATHS}                              & Integer      & Section~\ref{info:Leaks}                &            &  200              \\ \hline
+{\ct MINIMUM\_FILM\_THICKNESS}                      & Real         & Section~\ref{info:surface_droplets}     &  m         & 0.00001           \\ \hline
 {\ct MPI\_TIMEOUT}                                  & Real         & Section~\ref{info:TIMING}               &  s         & 10.               \\ \hline
 {\ct NEAR\_WALL\_TURBULENCE\_MODEL}                 & Character    & Section~\ref{info:LES}                  &            &                   \\ \hline
 {\ct NOISE}                                         & Logical      & Section~\ref{info:NOISE}                &            & {\ct .TRUE.}      \\ \hline
@@ -11399,13 +11415,15 @@ $\Delta t$={\ct T\_END-T\_BEGIN}
 {\ct FREE\_AREA\_FRACTION}               & Real        & Section~\ref{info:particle_screen}                                    &                   &                       \\ \hline
 {\ct GAMMA\_D}                           & Real        & Section~\ref{info:particle_size}                                      &                   & 2.4                   \\ \hline
 {\ct HEAT\_OF\_COMBUSTION}               & Real        & Section~\ref{info:fuel_droplets}                                      & kJ/kg             &                       \\ \hline
+{\ct HEAT\_TRANSFER\_COEFFICIENT\_GAS}   & Real        & Section~\ref{thermal_part_props}                                      & W/m$^2$/K         &                      \\ \hline
+{\ct HEAT\_TRANSFER\_COEFFICIENT\_SOLID} & Real        & Section~\ref{info:surface_droplets}                                   & W/m$^2$/K         & 300                  \\ \hline
 {\ct HORIZONTAL\_VELOCITY}               & Real        & Section~\ref{info:surface_droplets}                                   & m/s               &  0.2                  \\ \hline
-{\ct H\_SOLID\_TO\_DROPLET}              & Real        & Section~\ref{info:surface_droplets}                                   & \si{kJ/(m$^2$.K)} &  0.3                  \\ \hline
 {\ct ID}                                 & Character   & Section~\ref{info:PART_Basics}                                        &                   &                       \\ \hline
-{\ct INITIAL\_TEMPERATURE}               & Real        & Section~\ref{thermal_part_props}                                      & $^\circ$C          & {\ct TMPA}            \\ \hline
+{\ct INITIAL\_TEMPERATURE}               & Real        & Section~\ref{thermal_part_props}                                      & $^\circ$C         & {\ct TMPA}            \\ \hline
 {\ct KILL\_DIAMETER}                     & Real        & Section~\ref{info:particle_size}                                      & $\mu$m            &                       \\ \hline
 {\ct MASSLESS}                           & Logical     & Section~\ref{info:MASSLESS}                                           &                   & {\ct .FALSE.}         \\ \hline
-{\ct MAXIMUM\_DIAMETER}                  & Real        & Section~\ref{info:particle_size}                                      & $\mu$m            & Infinite              \\ \hline
+{\ct MASS\_TRANSFER\_COEFFICIENT}        & Real        & Section~\ref{thermal_part_props}                                      & m/s               &                      \\ \hline
+{\ct MAXIMUM\_DIAMETER}                  & Real        & Section~\ref{info:particle_size}                                      & $\mu$m            & 1000000               \\ \hline
 {\ct MINIMUM\_DIAMETER}                  & Real        & Section~\ref{info:particle_size}                                      & $\mu$m            &                       \\ \hline
 {\ct MONODISPERSE}                       & Logical     & Section~\ref{info:particle_size}                                      &                   & {\ct .FALSE.}         \\ \hline
 {\ct N\_STRATA}                          & Integer     & Section~\ref{info:particle_size}                                      &                   & 6                     \\ \hline
@@ -11422,7 +11440,7 @@ $\Delta t$={\ct T\_END-T\_BEGIN}
 {\ct RUNNING\_AVERAGE\_FACTOR\_WALL}     & Real        & Section~\ref{radiative_part_props}                                    &                   & 0.5                   \\ \hline
 {\ct SAMPLING\_FACTOR}                   & Integer     & Section~\ref{info:part_output}                                        &                   & 1                     \\ \hline
 {\ct SECOND\_ORDER\_PARTICLE\_TRANSPORT} & Logical     & Section~\ref{info:PART_Stability}                                     &                   & {\ct .FALSE.}         \\ \hline
-{\ct SHAPE\_FACTOR}                      & Real        & Sections~\ref{info:particle_radiation_absorption}, \ref{pine_needles} &                   &                       \\ \hline
+{\ct SHAPE\_FACTOR}                      & Real        & Section~\ref{pine_needles}                                            &                   &                       \\ \hline
 {\ct SIGMA\_D}                           & Real        & Section~\ref{info:particle_size}                                      &                   &                       \\ \hline
 {\ct SPEC\_ID}                           & Character   & Section~\ref{thermal_part_props}                                      &                   &                       \\ \hline
 {\ct STATIC}                             & Logical     & Section~\ref{info:PART_SURF}                                          &                   & {\ct .FALSE.}         \\ \hline
@@ -11739,6 +11757,7 @@ $\Delta t$={\ct T\_END-T\_BEGIN}
 {\ct MAXIMUM\_VALUE}    & Real              & Reference~\cite{Smokeview_Users_Guide}    &           &                   \\ \hline
 {\ct MESH\_NUMBER}      & Integer           & Section~\ref{info:SLCF}                   &           &                   \\ \hline
 {\ct MINIMUM\_VALUE}    & Real              & Reference~\cite{Smokeview_Users_Guide}    &           &                   \\ \hline
+%{\ct MULTI\_RES}        & Logical           & Reference~\cite{info:SLCF}                &           &                   \\ \hline
 {\ct PART\_ID}          & Character         & Section~\ref{info:outputquantities}       &           &                   \\ \hline
 {\ct PBX, PBY, PBZ}     & Real              & Section~\ref{info:SLCF}                   & m         &                   \\ \hline
 {\ct PROP\_ID}          & Character         & Section~\ref{info:FED}                    &           &                   \\ \hline

@@ -39,7 +39,9 @@ TYPE LAGRANGIAN_PARTICLE_CLASS_TYPE
    REAL(EB) :: SIGMA                      !< Parameter in Rosin-Rammler distribution
    REAL(EB) :: VERTICAL_VELOCITY          !< Speed (m/s) of liquid droplet stuck to a vertical surface
    REAL(EB) :: HORIZONTAL_VELOCITY        !< Speed (m/s) of liquid droplet stuck to a horizontal surface
-   REAL(EB) :: H_SOLID_TO_DROPLET         !< Heat transfer coefficient from solid surface to liquid droplet
+   REAL(EB) :: MASS_TRANSFER_COEFFICIENT        !< Mass transfer coefficient from gas to liquid droplet (kg/m2/s)
+   REAL(EB) :: HEAT_TRANSFER_COEFFICIENT_GAS    !< Heat transfer coefficient from gas to liquid droplet (W/m2/K)
+   REAL(EB) :: HEAT_TRANSFER_COEFFICIENT_SOLID  !< Heat transfer coefficient from solid surface to liquid droplet (W/m2/K)
    REAL(EB) :: DRAG_COEFFICIENT(3)        !< Drag coefficient in 3 coordinate directions
    REAL(EB) :: SURFACE_DIAMETER           !< Effective liquid droplet diameter (m) on a solid surface
    REAL(EB) :: SURFACE_TENSION            !< Surface tension (N/m) of liquid droplets
@@ -457,8 +459,11 @@ END TYPE MATERIAL_TYPE
 
 TYPE (MATERIAL_TYPE), DIMENSION(:), ALLOCATABLE, TARGET :: MATERIAL
 
+!> \brief Variables associated with a surface type
+
 TYPE SURFACE_TYPE
-   REAL(EB) :: AREA_MULTIPLIER=1._EB, TMP_FRONT=-1._EB,TMP_BACK=-1._EB,VEL,VEL_GRAD,PLE, &
+   REAL(EB) :: AREA_MULTIPLIER=1._EB                     !< Factor for manual surface area adjustment
+   REAL(EB) :: TMP_FRONT=-1._EB,TMP_BACK=-1._EB,VEL,VEL_GRAD,PLE, &
                Z0,CONVECTIVE_HEAT_FLUX,NET_HEAT_FLUX, &
                VOLUME_FLOW,HRRPUA,MLRPUA,T_IGN,SURFACE_DENSITY,CELL_SIZE_FACTOR, &
                E_COEFFICIENT,TEXTURE_WIDTH,TEXTURE_HEIGHT,THICKNESS,EXTERNAL_FLUX, &
@@ -510,9 +515,10 @@ TYPE SURFACE_TYPE
    ! Level Set Firespread
 
    LOGICAL :: VEG_LSET_SPREAD,VEG_LSET_TAN2
-   REAL(EB) :: VEG_LSET_IGNITE_T,VEG_LSET_ROS_HEAD,VEG_LSET_ROS,VEG_LSET_QCON,VEG_LSET_ROS_FLANK,VEG_LSET_ROS_BACK, &
+   REAL(EB) :: VEG_LSET_IGNITE_T,VEG_LSET_ROS_HEAD,VEG_LSET_ROS_00,VEG_LSET_QCON,VEG_LSET_ROS_FLANK,VEG_LSET_ROS_BACK, &
                VEG_LSET_WIND_EXP,VEG_LSET_SIGMA,VEG_LSET_HT,VEG_LSET_BETA,&
-               VEG_LSET_M1,VEG_LSET_M10,VEG_LSET_M100,VEG_LSET_MLW,VEG_LSET_MLH
+               VEG_LSET_M1,VEG_LSET_M10,VEG_LSET_M100,VEG_LSET_MLW,VEG_LSET_MLH,VEG_LSET_SURF_LOAD,VEG_LSET_FIREBASE_TIME, &
+               VEG_LSET_CHAR_FRACTION
    INTEGER :: VEG_LSET_FUEL_INDEX
 
    !HTC Custom
@@ -537,7 +543,7 @@ TYPE OMESH_TYPE
    TYPE (EXPOSED_WALL_TYPE), ALLOCATABLE, DIMENSION(:) :: EXPOSED_WALL
 
    ! CC_IBM data exchange arrays:
-   INTEGER :: NICC_S(2)=0, NICC_R(2)=0, NFCC_S(2)=0, NFCC_R(2)=0, NCC_INT_R=0, NFEP_R(3)=0
+   INTEGER :: NICC_S(2)=0, NICC_R(2)=0, NFCC_S(2)=0, NFCC_R(2)=0, NCC_INT_R=0, NFEP_R(3)=0, NFEP_R_G=0
    REAL(EB), ALLOCATABLE, DIMENSION(:) ::                &
          REAL_SEND_PKG11,REAL_SEND_PKG12,REAL_SEND_PKG13,&
          REAL_RECV_PKG11,REAL_RECV_PKG12,REAL_RECV_PKG13

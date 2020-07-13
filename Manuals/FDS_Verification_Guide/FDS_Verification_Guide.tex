@@ -155,6 +155,8 @@ The following individuals contributed to the verification process of FDS.
 \item Chao Zhang of Tongji University provided the finite-element analysis for the HT3D I-beam test case.
 \item Salah Benkorichi of Ulster University, Belfast, developed the HT3D sphere test case.
 \item Kiyoung Moon and Jung-il Choi of Yonsei University, Seoul, South Korea, provided the Heat Channel Flow case.
+\item Jesus Alberto Mejias Tuni of Politecnico di Torino provided the 1-D tunnel cases with heat release.
+\item Morteza Gholami Haghighi Fard of Aalto University, Finland, contributed the PYRO3D ``Parallel Solid Phase Reactions'' case.
 \end{itemize}
 
 
@@ -1511,6 +1513,8 @@ This test case is a replica of {\ct water\_evaporation\_1} in Sec.~\ref{water_ev
 
 \section{Tunnel Flow}
 
+\textbf{Jesus Alberto Mejias Tuni, Politecnico di Torino}
+
 \subsection{1-D Flow in a Tunnel (\texorpdfstring{\textct{tunnel\_const\_gamma}}{tunnel\_const\_gamma})}
 \label{tunnel_const_gamma}
 
@@ -2118,6 +2122,24 @@ Figure \ref{fig:H2O_mass_balance} shows the results of two cases that test the m
 \end{tabular*}
 \caption[The \textct{mass\_flux\_wall} test cases]{Results of the \textct{mass\_flux\_wall} test cases.  (Left) Lumped species balance, (Right) primitive species balance.}
 \label{fig:H2O_mass_balance}
+\end{figure}
+
+\subsection{Mass Balance for Species in a Reacting Flow (\texorpdfstring{\textct{mass\_balance\_reac}}{mass\_balance\_reac})}
+\label{mass_balance_reac}
+
+A 0.25 m$^2$ propane burner ramps up to 500 kW linearly in 10~s and holds this heat release rate for another 10~s.  Using a mass file, appropriate wall flux devices with surface integrals, and reaction source term devices with volume integrals, we perform a detailed mass balance on all the primitive species in the reaction.  The results are presented in Fig.~\ref{fig:mass_balance_reac}.  The mass balance can be understood through the mnemonic, ``Accumulation equals In minus Out plus Generation''.  For each species, we plot the ``accumulation'' term (first-order numerical differentiation of the columns in the {\ct MASS\_FILE}, which are volume integrated over the domain), the ``in-out'' term (surface intgral of the mass fluxes over the domain boundaries), the ``generation'' term (volume integral of the reaction source term over the domain), and the sum of these as the ``balance'' (the balance should be zero).
+
+\begin{figure}[ht]
+\begin{tabular*}{\textwidth}{lr}
+\includegraphics[height=2.2in]{SCRIPT_FIGURES/mass_balance_reac_C3H8} &
+\includegraphics[height=2.2in]{SCRIPT_FIGURES/mass_balance_reac_O2}   \\
+\includegraphics[height=2.2in]{SCRIPT_FIGURES/mass_balance_reac_N2}   &
+\includegraphics[height=2.2in]{SCRIPT_FIGURES/mass_balance_reac_H2O}  \\
+\includegraphics[height=2.2in]{SCRIPT_FIGURES/mass_balance_reac_CO2}  &
+\includegraphics[height=2.2in]{SCRIPT_FIGURES/mass_balance_reac_Soot}
+\end{tabular*}
+\caption[The \textct{mass\_balance\_reac} test case]{Results of the \textct{mass\_balance\_reac} test case.}
+\label{fig:mass_balance_reac}
 \end{figure}
 
 \subsection{Checking the Equation of State (\texorpdfstring{\textct{particle\_offgas}}{particle\_offgas})}
@@ -2741,6 +2763,20 @@ Tests similar to those in Section~\ref{droplet_absorption} are performed for sol
 \label{particle_absorption_figures}
 \end{figure}
 
+
+\section{Consistency of Particle Absorbed Energy and the Radiative Loss Term}
+\label{particle_isotropic_radiation}
+\label{particle_anisotropic_radiation}
+
+Small spherical, cylindrical and planar particles with black (emissivity = 1) surfaces are placed in radiation field. Radiation is coming from black surfaces, and the gas is pure Nitrogen, i.e. non-participating. The amount of energy removed from the intensity field is measured by a device calculating spatial and temporal integrals of radiation loss term (Q\_w).  The reference solution (E\_w) is the wall enthalpy increase, as observed by the one-dimensional heat conduction solver.
+In {\ct particle\_isotropic\_radiation}, the radiation field isotropic, i.e. all surfaces are black and constant temperature. In {\ct particle\_anisotropic\_radiation}, an anistropic intensity field is geated by specifying one hot wall, one cold wall, and four other fields being mirrors.
+
+\begin{figure}[ht]
+\includegraphics[height=2.2in]{SCRIPT_FIGURES/particle_isotropic_radiation}
+\includegraphics[height=2.2in]{SCRIPT_FIGURES/particle_anisotropic_radiation}
+\caption[The {\ct particle\_isotropic\_radiation} and {\ct particle\_anisotropic\_radiation} test cases]{Absorbed energy of spherical, cylindrical and cartesian particles in isotropic (left) and anisotropic (right) radiation field.}
+\label{particle_an_isotropic_radiation_figs}
+\end{figure}
 
 
 \section{Radiation Attenuation by Scattering Particles (\texorpdfstring{\textct{part\_attenuation}}{part\_attenuation}) }
@@ -4790,6 +4826,21 @@ This case compares mass loss rates and material thickness for pyrolysis of black
 	\label{fig:pyro3d_vs_pyro1d}
 \end{figure}
 
+\subsection{Parallel Solid Phase Reactions (\texorpdfstring{\textct{pyro3d\_vs\_pyro1d\_wood\_moist}}{pyro3d\_vs\_pyro1d\_wood\_moist})}
+\label{pyro3d_vs_pyro1d_wood_moist}
+
+\textbf{Morteza Gholami Haghighi Fard, Aalto University}\\
+
+\noindent This case compares the mass conservation results between the 3D pyrolysis solver and 1D solver for a solid which undergoes a more complicated pyrolysis reaction than a solid with single virgin material. A wooden sample composed of 10 \% moisture content and 90 \% birch material (by mass) is heated up with an external flux of 50 \si{kW/m^2} from the top in both solvers. The moisture content evaporates into water vapor completely. Diversely, half of the birch material pyrolyzes into gaseous fuel while the other half converts to char residue. For the sake of comparability of 1D and 3D solvers, geometry and grid resolutions are set the same as the {\ct pyro3d\_vs\_pyro1d} verification case. Fig.~\ref{fig:pyro3d_vs_pyro1d_wood_moist} compares the gas production and solid phase material exchange for two solvers. As one can see, both algorithms generate similar results.
+
+\begin{figure}[!htb]
+	\centering
+	\includegraphics[height=2.2in]{SCRIPT_FIGURES/pyro3d_vs_pyro1d_wood_moist_gas} \\
+	\includegraphics[height=2.2in]{SCRIPT_FIGURES/pyro3d_vs_pyro1d_wood_moist_solid}
+	\caption[PYRO3D parallel solid phase reactions (the {\ct pyro3d\_vs\_pyro1d\_wood\_moist} case)]{Comparison of mass conservation results of 3D and 1D pyrolysis solvers for a wooden sample with parallel pyrolysis reactions. The top plot compares the gas production and the lower plot compares the solid phase material exchange. Verification targets are mass curves.}
+	\label{fig:pyro3d_vs_pyro1d_wood_moist}
+\end{figure}
+
 \subsection{Mass Transport (\texorpdfstring{\textct{pyro3d\_transport}}{pyro3d\_transport})}
 \label{pyro3d_transport}
 
@@ -5093,11 +5144,11 @@ Figure~\ref{flat_fire_plots} compares the first and second order accurate FDS so
 \subsection{Radiation Absorption by Vegetation}
 \label{vegetation_absorb}
 
-In this example, six channels, each measuring 4~m by 1~m by 1~m, are filled with various amounts of particles that represent vegetation---shrubbery, for example. The vegetation occupies exactly one cubic meter within each channel. One end of each channel is a solid wall with temperature $T_{\rm hot}= 1273$~K, and the opposite end is a wall with temperature $T_{\rm cold}=0$~K. Each wall has an emissivity of 1 and a heat transfer coefficient of 0. The side walls of the channels are ``mirror'' boundaries which essentially means that the end walls and vegetation layer are infinitely wide, rendering the configuration one-dimensional. With no particles present, the radiative intensity, or {\em radiance}, in the axial direction at the hot wall is $I_0=\sigma T_{\rm hot}^4/\pi \approx 47.4$~kW/(m$^2 \cdot$sr). With particles present, the radiance is expected to attenuate according to the following:
+In this example, six channels, each measuring 4~m by 1~m by 1~m, are filled with various amounts of particles that represent vegetation. The vegetation occupies exactly one cubic meter within each channel. One end of each channel is a solid wall with temperature $T_{\rm hot}= 1273$~K, and the opposite end is a wall with temperature $T_{\rm cold}=0$~K. Each wall has an emissivity of 1 and a heat transfer coefficient of 0. The side walls of the channels are ``mirror'' boundaries which essentially means that the end walls and vegetation layer are infinitely wide, rendering the configuration one-dimensional. With no particles present, the radiative intensity, or {\em radiance}, in the axial direction at the hot wall is $I_0=\sigma T_{\rm hot}^4/\pi \approx 47.4$~kW/(m$^2 \cdot$sr). With particles present, the radiance is expected to attenuate according to the following:
 \be
-   I = I_0 \, \hbox{e}^{-C_{\rm s} \beta \sigma_{\rm p} L}
+   I = I_0 \, \hbox{e}^{-0.25 \, \beta \sigma_{\rm p} L}
 \ee
-where $C_{\rm s}$ is the particle shape factor, $\beta$ is the ``packing ratio,'' $\sigma_{\rm p}$ is the particle surface area to volume ratio, and $L=1$~m is the depth of the vegetation layer. It is assumed that the vegetation in this case consists of uniformly sized cylinders that are 1~mm in diameter and 2~cm long. The shape factor is taken to be the ratio of the cylinder's cross sectional area to surface area when oriented normal to the central axis of the channel, or $1/\pi$. The packing ratio is $m'''/\rho_{\rm p}$, the vegetation mass per unit volume, or bulk density, divided by the density of the vegetation itself. $\rho_{\rm p}=500$~kg/m$^3$ in this example. The surface area to volume ratio of the cylinder is $2/r=4000$~m$^{-1}$, where $r$ is the radius of the cylinder. Figure~\ref{vegetation_absorb_fig} displays the comparison of the expected radiative heat flux versus that calculated by FDS.
+$\beta=m'''/\rho_{\rm p}$ is the ``packing ratio,'' the vegetation mass per unit volume, or ``bulk density,'' divided by the density of the vegetation itself, $\rho_{\rm p}=500$~kg/m$^3$. $\sigma_{\rm p}=4000$~m$^{-1}$ is the particle surface area to volume ratio, and $L=1$~m is the depth of the vegetation layer. Figure~\ref{vegetation_absorb_fig} displays the comparison of the expected radiative heat flux versus that calculated by FDS.
 \begin{figure}[!ht]
 \centering
 \includegraphics[height=2.2in]{SCRIPT_FIGURES/vegetation_absorb}

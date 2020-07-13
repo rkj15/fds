@@ -236,8 +236,6 @@ $QFDS -d Flowfields species_conservation_4.fds
 $QFDS -d Flowfields hot_layer_360.fds
 $QFDS -d Flowfields realizable_mass_fractions.fds
 $QFDS -d Flowfields mean_forcing_hole.fds
-$QFDS -d Flowfields mass_flux_wall_yindex.fds
-$QFDS -d Flowfields mass_flux_wall_zindex.fds
 $QFDS -p 4 -d Flowfields parabolic_profile.fds
 $QFDS -p 5 -d Flowfields simple_duct.fds
 $QFDS -p 8 -d Flowfields symmetry_test_mpi.fds
@@ -452,7 +450,9 @@ $QFDS -d Pyrolysis water_ice_water.fds
 $QFDS -d Pyrolysis pcm_slab.fds
 $QFDS -d Pyrolysis pyro3d_wood_char.fds
 $QFDS -d Pyrolysis pyro3d_vs_pyro1d.fds
+$QFDS -d Pyrolysis pyro3d_vs_pyro1d_wood_moist.fds
 $QFDS -d Pyrolysis pyro3d_transport.fds
+
 
 $QFDS -d Radiation adiabatic_surface_temperature.fds
 $QFDS -d Radiation droplet_absorption_cart.fds
@@ -574,8 +574,12 @@ $QFDS -d Species condensation_2.fds
 $QFDS -d Species condensation_3.fds
 $QFDS -d Species wall_cond.fds
 $QFDS -d Species humidity.fds
+$QFDS -d Species mass_flux_wall_yindex.fds
+$QFDS -d Species mass_flux_wall_zindex.fds
+$QFDS -p 8 -d Species mass_balance_reac.fds
 
 $QFDS -d Sprinklers_and_Sprays activate_sprinklers.fds
+$QFDS -d Sprinklers_and_Sprays adiabatic_surface_temperature_spray.fds
 $QFDS -d Sprinklers_and_Sprays bucket_test_1.fds
 $QFDS -d Sprinklers_and_Sprays bucket_test_2.fds
 $QFDS -d Sprinklers_and_Sprays bucket_test_3.fds
@@ -588,6 +592,8 @@ $QFDS -d Sprinklers_and_Sprays droplet_distributions_2.fds
 $QFDS -d Sprinklers_and_Sprays flow_rate.fds
 $QFDS -d Sprinklers_and_Sprays flow_rate_2.fds
 $QFDS -p 2 -d Sprinklers_and_Sprays geom_sprk_mass.fds
+$QFDS -d Sprinklers_and_Sprays particle_anisotropic_radiation.fds
+$QFDS -d Sprinklers_and_Sprays particle_isotropic_radiation.fds
 $QFDS -d Sprinklers_and_Sprays particle_colors.fds
 $QFDS -d Sprinklers_and_Sprays particle_drag_U10_N16.fds
 $QFDS -d Sprinklers_and_Sprays particle_drag_U50_N16.fds
@@ -739,6 +745,7 @@ $QFDS -d WUI Bova_1a.fds
 $QFDS -d WUI Bova_1b.fds
 $QFDS -d WUI Bova_4a.fds
 $QFDS -d WUI char_oxidation_1.fds
+$QFDS -d WUI char_oxidation_2.fds
 $QFDS -d WUI dragon_5a.fds
 $QFDS -p 2 -d WUI ground_vegetation_conv.fds
 $QFDS -p 2 -d WUI ground_vegetation_drag.fds
