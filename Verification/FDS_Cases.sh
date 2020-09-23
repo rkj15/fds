@@ -22,8 +22,10 @@ $QFDS -d Aerosols soot_oxidation_wall.fds
 $QFDS -d Atmospheric_Effects lee_waves.fds
 $QFDS -d Atmospheric_Effects stack_effect.fds
 $QFDS -d Atmospheric_Effects lapse_rate.fds
-$QFDS -p  8 -d Atmospheric_Effects wind_example.fds
+$QFDS -p 8 -d Atmospheric_Effects wind_example.fds
 $QFDS -p 32 -n 8 -d Atmospheric_Effects wind_example_32.fds
+$QFDS -d Atmospheric_Effects MO_velocity_profile_stable.fds
+$QFDS -d Atmospheric_Effects MO_velocity_profile_unstable.fds
 
 $QFDS -d Complex_Geometry geom_extruded_poly.fds
 $QFDS -d Complex_Geometry geom_intersection.fds
@@ -53,7 +55,6 @@ $QFDS -d Complex_Geometry geom_texture3a.fds
 $QFDS -d Complex_Geometry geom_texture3b.fds
 $QFDS -d Complex_Geometry geom_texture4a.fds
 $QFDS -d Complex_Geometry geom_texture4b.fds
-$QFDS -d Complex_Geometry geom_arch.fds
 $QFDS -d Complex_Geometry sphere_helium_1mesh.fds
 $QFDS -p 3 -d Complex_Geometry sphere_helium_3meshes.fds
 $QFDS -p 3 -d Complex_Geometry sphere_helium_conserve_3meshes.fds
@@ -117,9 +118,9 @@ $QFDS -d Complex_Geometry rotated_cube_0deg_128_obs.fds
 $QFDS -d Complex_Geometry rotated_cube_0deg_256_exp.fds
 $QFDS -d Complex_Geometry rotated_cube_0deg_256_imp.fds
 $QFDS -d Complex_Geometry rotated_cube_0deg_256_obs.fds
-$QFDS -o 4 -d Complex_Geometry rotated_cube_0deg_384_exp.fds
-$QFDS -o 4 -d Complex_Geometry rotated_cube_0deg_384_imp.fds
-$QFDS -o 4 -d Complex_Geometry rotated_cube_0deg_384_obs.fds
+$QFDS -o 2 -d Complex_Geometry rotated_cube_0deg_384_exp.fds
+$QFDS -o 2 -d Complex_Geometry rotated_cube_0deg_384_imp.fds
+$QFDS -o 2 -d Complex_Geometry rotated_cube_0deg_384_obs.fds
 $QFDS -d Complex_Geometry rotated_cube_27deg_32_exp.fds
 $QFDS -d Complex_Geometry rotated_cube_27deg_32_imp.fds
 $QFDS -d Complex_Geometry rotated_cube_27deg_64_exp.fds
@@ -128,8 +129,8 @@ $QFDS -d Complex_Geometry rotated_cube_27deg_128_exp.fds
 $QFDS -d Complex_Geometry rotated_cube_27deg_128_imp.fds
 $QFDS -d Complex_Geometry rotated_cube_27deg_256_exp.fds
 $QFDS -d Complex_Geometry rotated_cube_27deg_256_imp.fds
-$QFDS -o 4 -d Complex_Geometry rotated_cube_27deg_384_exp.fds
-$QFDS -o 4 -d Complex_Geometry rotated_cube_27deg_384_imp.fds
+$QFDS -o 2 -d Complex_Geometry rotated_cube_27deg_384_exp.fds
+$QFDS -o 2 -d Complex_Geometry rotated_cube_27deg_384_imp.fds
 $QFDS -d Complex_Geometry rotated_cube_45deg_32_exp.fds
 $QFDS -d Complex_Geometry rotated_cube_45deg_32_imp.fds
 $QFDS -d Complex_Geometry rotated_cube_45deg_64_exp.fds
@@ -138,8 +139,8 @@ $QFDS -d Complex_Geometry rotated_cube_45deg_128_exp.fds
 $QFDS -d Complex_Geometry rotated_cube_45deg_128_imp.fds
 $QFDS -d Complex_Geometry rotated_cube_45deg_256_exp.fds
 $QFDS -d Complex_Geometry rotated_cube_45deg_256_imp.fds
-$QFDS -o 4 -d Complex_Geometry rotated_cube_45deg_384_exp.fds
-$QFDS -o 4 -d Complex_Geometry rotated_cube_45deg_384_imp.fds
+$QFDS -o 2 -d Complex_Geometry rotated_cube_45deg_384_exp.fds
+$QFDS -o 2 -d Complex_Geometry rotated_cube_45deg_384_imp.fds
 
 $QFDS -d Complex_Geometry cone_1mesh.fds
 $QFDS -d Complex_Geometry geom_mass_file_test.fds
@@ -579,7 +580,7 @@ $QFDS -d Species mass_flux_wall_zindex.fds
 $QFDS -p 8 -d Species mass_balance_reac.fds
 
 $QFDS -d Sprinklers_and_Sprays activate_sprinklers.fds
-$QFDS -d Sprinklers_and_Sprays adiabatic_surface_temperature_spray.fds
+$QFDS -d Sprinklers_and_Sprays adiabatic_surf_temp_spray.fds
 $QFDS -d Sprinklers_and_Sprays bucket_test_1.fds
 $QFDS -d Sprinklers_and_Sprays bucket_test_2.fds
 $QFDS -d Sprinklers_and_Sprays bucket_test_3.fds
@@ -592,8 +593,8 @@ $QFDS -d Sprinklers_and_Sprays droplet_distributions_2.fds
 $QFDS -d Sprinklers_and_Sprays flow_rate.fds
 $QFDS -d Sprinklers_and_Sprays flow_rate_2.fds
 $QFDS -p 2 -d Sprinklers_and_Sprays geom_sprk_mass.fds
-$QFDS -d Sprinklers_and_Sprays particle_anisotropic_radiation.fds
-$QFDS -d Sprinklers_and_Sprays particle_isotropic_radiation.fds
+$QFDS -d Sprinklers_and_Sprays particle_anisotropic_radi.fds
+$QFDS -d Sprinklers_and_Sprays particle_isotropic_radi.fds
 $QFDS -d Sprinklers_and_Sprays particle_colors.fds
 $QFDS -d Sprinklers_and_Sprays particle_drag_U10_N16.fds
 $QFDS -d Sprinklers_and_Sprays particle_drag_U50_N16.fds
